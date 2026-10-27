@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# Swift build products
+.build/
+.swiftpm/
+
+# Packaged app output
+dist/
+
+# Local .NET SDK installed by WindowsApp/tools/bootstrap-dotnet.sh
+.tools/
+
+# .NET build output
+**/bin/
+**/obj/
+
+# EA FC game data used to generate the player database — third-party, do not commit
+db_loc_27/
+Fifa names and ovrs/
+
+# Freebuff workspace metadata
+.freebuff/
+
+# Editors / tooling
+*.swp
+.idea/
+.vscode/
