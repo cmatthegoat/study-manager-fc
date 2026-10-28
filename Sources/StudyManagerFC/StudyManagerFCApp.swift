@@ -10,7 +10,10 @@ struct StudyManagerFCApp: App {
         // shipped bundle can find and decode it without opening a window.
         if CommandLine.arguments.contains("--verify-database") {
             let database = FcDatabase.shared
-            print("clubs=\(database.clubs.count) players=\(database.players.count) loaded=\(database.isLoaded)")
+            // A bundle carrying a data file whose potentials are all equal to the overalls
+            // is stale: transfers and squad ceilings then look frozen.
+            let filled = database.players.filter { $0.pot > $0.ovr }.count
+            print("clubs=\(database.clubs.count) players=\(database.players.count) loaded=\(database.isLoaded) potentials-filled=\(filled)")
             exit(database.isLoaded ? 0 : 1)
         }
     }
@@ -38,6 +41,7 @@ struct RootView: View {
 
 enum MainSection: String, CaseIterable, Identifiable {
     case dashboard
+    case log
     case subjects
     case todos
     case squad
@@ -50,6 +54,7 @@ enum MainSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .dashboard: "Dashboard"
+        case .log: "Study Log"
         case .subjects: "Subjects"
         case .todos: "Todos"
         case .squad: "Squad"
@@ -62,6 +67,7 @@ enum MainSection: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .dashboard: "chart.line.uptrend.xyaxis"
+        case .log: "clock.arrow.circlepath"
         case .subjects: "books.vertical"
         case .todos: "checklist"
         case .squad: "person.3"
@@ -83,6 +89,7 @@ struct MainTabView: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 SectionSwitcher(selection: $selection)
+                TransferOffersButton()
                 resetButton
             }
             .padding(.horizontal, 20)
@@ -145,7 +152,9 @@ struct MainTabView: View {
     private var content: some View {
         switch selection {
         case .dashboard:
-            DashboardView()
+            DashboardView(onOpenLog: { selection = .log })
+        case .log:
+            StudyLogView()
         case .subjects:
             SubjectsView()
         case .todos:

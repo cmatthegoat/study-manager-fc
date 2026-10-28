@@ -11,8 +11,18 @@ enum GameRules {
     static let xpPerLevel = 750
     /// Club Cash paid to each player for every level gained.
     static let clubCashPerLevelUp = 500
-    /// Chance that a qualifying study session, extra session or match brings a transfer offer.
-    static let transferOfferChance = 0.25
+    /// A transfer-listed player receives one fresh offer after every match you play. Half of
+    /// those offers value the player above the market, half try to buy him cheaply.
+    static let transferOfferGoodChance = 0.5
+    /// Patience a club loses each time you counter above what it is prepared to pay.
+    static let transferOfferCounterPatienceCost = 34
+    /// What a good offer starts at, as a share of the player's market value.
+    static let transferOfferGoodBidRange = 0.92...1.15
+    /// The most a good offer will ever rise to.
+    static let transferOfferGoodCeilingRange = 1.10...1.30
+    /// A bad offer opens well below the market and never reaches it.
+    static let transferOfferBadBidRange = 0.55...0.85
+    static let transferOfferBadCeilingRange = 0.85...0.98
     static let freeAgentPoolTarget = 84
     static let retirementAge = 40
     static let academyIntakePerSeason = 3
@@ -1339,7 +1349,7 @@ enum PackCatalog {
 }
 
 struct GameState: Codable {
-    static let currentSchemaVersion = 5
+    static let currentSchemaVersion = 6
 
     var schemaVersion: Int
     var createdAt: Date
@@ -1476,13 +1486,66 @@ extension GameState {
     }
 }
 
-/// An offer from another club for one of your listed players.
+/// An offer from another club for one of your listed players. The club has a hidden ceiling
+/// it will not pass, so the bid is negotiable but not unlimited; patience runs out if you
+/// keep asking for more than it can pay.
 struct TransferOffer: Identifiable, Codable, Hashable {
     var id: UUID
     var playerID: UUID
     var clubName: String
     var amount: Int
     var createdAt: Date
+    /// The player's value when the offer was made, so the UI can show good and bad offers.
+    var marketValue: Int = 0
+    /// The most this club will pay, never revealed to the player.
+    var ceiling: Int = 0
+    var patience: Int = 100
+    /// A good offer opened at or above the market; a bad one opened well below it.
+    var isGood: Bool = true
+
+    var isAboveValue: Bool { marketValue > 0 && amount >= marketValue }
+
+    /// True once the club is at the most it will ever pay, so the UI can say so.
+    var isFinal: Bool { amount >= ceiling }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case playerID
+        case clubName
+        case amount
+        case createdAt
+        case marketValue
+        case ceiling
+        case patience
+        case isGood
+    }
+
+    init(id: UUID, playerID: UUID, clubName: String, amount: Int, createdAt: Date, marketValue: Int = 0, ceiling: Int = 0, patience: Int = 100, isGood: Bool = true) {
+        self.id = id
+        self.playerID = playerID
+        self.clubName = clubName
+        self.amount = amount
+        self.createdAt = createdAt
+        self.marketValue = marketValue
+        self.ceiling = ceiling
+        self.patience = patience
+        self.isGood = isGood
+    }
+
+    /// Offers written before negotiation existed carry no ceiling or value; treat the bid
+    /// itself as the ceiling so they can still be accepted or declined.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        playerID = try container.decode(UUID.self, forKey: .playerID)
+        clubName = try container.decode(String.self, forKey: .clubName)
+        amount = try container.decode(Int.self, forKey: .amount)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        marketValue = try container.decodeIfPresent(Int.self, forKey: .marketValue) ?? amount
+        ceiling = try container.decodeIfPresent(Int.self, forKey: .ceiling) ?? amount
+        patience = try container.decodeIfPresent(Int.self, forKey: .patience) ?? 100
+        isGood = try container.decodeIfPresent(Bool.self, forKey: .isGood) ?? (amount >= marketValue)
+    }
 }
 
 /// One player's goals and assists in one club's matches. Keyed by name and club so the

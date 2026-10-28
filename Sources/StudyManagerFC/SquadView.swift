@@ -356,6 +356,9 @@ private struct PlayerPickerSheet: View {
             } else {
                 Pill(text: "OUT OF POSITION", color: .orange)
             }
+            if player.isUserListing {
+                Pill(text: "LISTED", color: .studyGold)
+            }
             if !isCurrent && store.state.bench.contains(player.id) {
                 Pill(text: "BENCH", color: .secondary)
             }
@@ -408,6 +411,9 @@ private struct PlayerDetailSheet: View {
                         Pill(text: "OVR \(player.overall)", color: player.rarity.accentColor)
                         Pill(text: "POT \(player.potential)", color: .studyTeal)
                         Pill(text: "AGE \(player.age)", color: .secondary)
+                        if player.isUserListing {
+                            Pill(text: "TRANSFER LISTED", color: .studyGold)
+                        }
                     }
 
                     attributeBars
@@ -483,6 +489,29 @@ private struct PlayerDetailSheet: View {
                                 }
                                 .buttonStyle(.bentoBordered)
                             }
+                        }
+
+                        // Selling through the market beats releasing for a fraction, so listing
+                        // is the primary route out of the club.
+                        Button {
+                            store.setPlayerListed(player.id, listed: !player.isUserListing)
+                        } label: {
+                            Label(
+                                player.isUserListing ? "Remove from transfer list" : "Add to transfer list",
+                                systemImage: player.isUserListing ? "minus.circle" : "arrow.left.arrow.right.circle"
+                            )
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.bentoBordered)
+                        .bentoTint(.gold)
+
+                        if player.isUserListing {
+                            Text("\(store.state.transferOffers.filter { $0.playerID == player.id }.count) offer(s) waiting. One arrives after each match.")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
                         Button(role: .destructive) {

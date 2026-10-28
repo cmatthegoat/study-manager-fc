@@ -301,6 +301,36 @@ public class SeasonFlowTests
     }
 
     [Fact]
+    public void DeletingAStudyEntryKeepsEarnedCashAndPersists()
+    {
+        var store = NewStore(out var directory);
+        try
+        {
+            store.StartCareer("arsenal");
+            store.LogStudy(StudyActivityKind.PastPaper, "Trial paper", 95, 1, StudySubject.Physics, 80, 100);
+            store.LogStudy(StudyActivityKind.Homework, "Essay", 45, 1, StudySubject.EnglishAdvanced);
+            Assert.Equal(2, store.State.RecentSessions.Count);
+            var cashAfterLogging = store.State.ClubCash;
+            var oldest = store.State.RecentSessions[1];
+
+            store.DeleteStudySession(oldest.Id);
+
+            Assert.Single(store.State.RecentSessions);
+            Assert.DoesNotContain(store.State.RecentSessions, session => session.Id == oldest.Id);
+            // Removing an entry is a log edit, not a refund.
+            Assert.Equal(cashAfterLogging, store.State.ClubCash);
+
+            var reloaded = new GameStore(new PersistenceStore(directory));
+            Assert.Single(reloaded.State.RecentSessions);
+            Assert.Equal("Essay", reloaded.State.RecentSessions[0].Title);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
     public void LegacySaveMigratesRetirementAge()
     {
         var directory = Path.Combine(Path.GetTempPath(), "smfc-legacy-" + Guid.NewGuid().ToString("N"));

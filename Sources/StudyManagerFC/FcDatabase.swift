@@ -39,11 +39,12 @@ struct FcPlayer: Codable, Identifiable, Hashable {
         FcDatabase.positionMapping[pos] ?? .centralMid
     }
 
-    /// The ratings export behind `fc-database.json` has no potential column, so every
-    /// row arrives with `pot` equal to `ovr`, which would leave database players unable
-    /// to grow past their starting rating. A row with no real potential gets a ceiling
-    /// from the same age bands the generated players use, seeded by the database id so
-    /// it stays stable across launches. Real potentials in the data file win.
+    /// `Scripts/fill-potential.py` writes the game's own potential into every row, so
+    /// `pot` is usually above `ovr` and is the ceiling the player grows towards. A file
+    /// that has not been through that step carries `pot` equal to `ovr`, which would leave
+    /// database players unable to grow; those rows fall back to a ceiling from the same
+    /// age bands the generated players use, seeded by the database id so it stays stable
+    /// across launches. Real potentials in the data file win.
     var potential: Int {
         pot > ovr ? pot : PlayerFactory.databasePotential(overall: ovr, age: age, databaseID: id)
     }
@@ -96,6 +97,11 @@ final class FcDatabase {
         }
         do {
             let file = try JSONDecoder().decode(FcDatabaseFile.self, from: Data(contentsOf: url))
+            // A file whose players are all at their overall was built before potentials
+            // were filled in; transfers and ceilings then look frozen, so say so loudly.
+            if !file.players.isEmpty, file.players.allSatisfy({ $0.pot <= $0.ovr }) {
+                NSLog("StudyManagerFC: fc-database.json carries no potentials (pot == ovr for every row) — run Scripts/fill-potential.py and repackage")
+            }
             return FcDatabase(clubs: file.clubs, players: file.players, nations: file.nations)
         } catch {
             NSLog("StudyManagerFC: could not read fc-database.json: \(error)")

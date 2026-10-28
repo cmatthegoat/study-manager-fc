@@ -55,6 +55,7 @@ public class DashboardView : IPage
     private TextBlock _examSubtitle = null!;
 
     private StackPanel _sessionsHost = null!;
+    private ActionButton _viewAllLog = null!;
     private string _sessionSignature = "";
     private string _nextFixtureSignature = "";
 
@@ -382,7 +383,22 @@ public class DashboardView : IPage
     private Control BuildSessionsCard()
     {
         var stack = new StackPanel { Spacing = 12 };
-        stack.Children.Add(Ui.SectionHeader("Recent Study", "Your latest logged sessions"));
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        header.Children.Add(Ui.SectionHeader("Recent Study", "Your latest logged sessions"));
+        _viewAllLog = new ActionButton(
+            "View all",
+            Palette.SurfaceTint,
+            Palette.Green,
+            Palette.Hairline,
+            radius: 999,
+            padding: new Thickness(12, 5),
+            fontSize: 11,
+            align: HorizontalAlignment.Right);
+        _viewAllLog.VerticalAlignment = VerticalAlignment.Center;
+        _viewAllLog.Clicked += () => _window.Navigate(MainSection.StudyLog);
+        Grid.SetColumn(_viewAllLog, 1);
+        header.Children.Add(_viewAllLog);
+        stack.Children.Add(header);
         _sessionsHost = new StackPanel { Spacing = 0 };
         stack.Children.Add(_sessionsHost);
         return Ui.Card(stack, 20);
@@ -548,7 +564,9 @@ public class DashboardView : IPage
     private void BuildSessions()
     {
         _sessionsHost.Children.Clear();
-        var sessions = _store.State.RecentSessions.Take(8).ToList();
+        var all = _store.State.RecentSessions;
+        var sessions = all.Take(8).ToList();
+        _viewAllLog.Text = all.Count > 8 ? $"View all {all.Count}" : "Open log";
         if (sessions.Count == 0)
         {
             var empty = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center };

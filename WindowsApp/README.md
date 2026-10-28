@@ -2,8 +2,10 @@
 
 A native Windows desktop build of StudyManager FC, sharing the macOS version's
 rules, data and save file. It is an Avalonia (.NET 8) app: one window, the same
-five sections (Dashboard, Subjects, Squad, Transfers, Champions League), the same
-green study theme, and the same career economy.
+sections (Dashboard, Study Log, Subjects, Squad, Transfers, Champions League), the
+same green study theme, and the same career economy. The Study Log mirrors the
+macOS tab: every entry, searchable by title, subject, topic, activity, marks or
+date, with subject / activity / period filters and deletion.
 
 **For players:** the packaged build lives at
 `dist/StudyManagerFC-Windows/StudyManagerFC.exe`. It is self-contained — no .NET
@@ -14,7 +16,7 @@ install is required. Double-click it and pick a club.
 | Path | Purpose |
 | --- | --- |
 | `src/StudyManagerFC.Core` | All game rules: models, player generator, match/schedule/season engines, the game store, and JSON persistence. No UI dependencies, so the rules can be tested on their own. |
-| `src/StudyManagerFC.Desktop` | Avalonia UI: theme and custom controls, tab shell, the five pages, and the player/lineup/match-report dialogs. |
+| `src/StudyManagerFC.Desktop` | Avalonia UI: theme and custom controls, tab shell, the pages, and the player/lineup/match-report dialogs. |
 | `tests/StudyManagerFC.Tests` | xUnit tests for pricing, squad ratings, simulation, season rollover and the save file format. |
 | `tools/generate-data.py` | Regenerates `src/StudyManagerFC.Core/Data.Generated.cs` (nations, clubs, club squads, name pools) from the Swift sources so both apps read the same dataset. |
 | `tools/make-icon.py` | Draws `app.ico` with no image dependencies. |

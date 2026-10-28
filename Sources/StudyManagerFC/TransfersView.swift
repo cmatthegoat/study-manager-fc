@@ -364,9 +364,18 @@ private struct TransferRow: View {
 
 struct NegotiationSheet: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
     let listing: AppStore.TransferListing
 
     @State private var offerText = ""
+
+    /// Leaves the negotiation for good: the sheet is dismissed as well as the deal cleared,
+    /// because walking away previously only nil'd the negotiation and left the sheet open
+    /// showing a fresh asking price, which read as the talks restarting.
+    private func finish() {
+        store.walkAwayFromNegotiation()
+        dismiss()
+    }
 
     private var deal: AppStore.Negotiation? { store.negotiation }
     private var name: String { store.playerName(for: listing) }
@@ -399,6 +408,19 @@ struct NegotiationSheet: View {
                         .foregroundStyle(Color.studyGold)
                         .monospacedDigit()
                 }
+                // A sheet has no dismiss control of its own on macOS, so there is always
+                // a way out even if a negotiation is in an unexpected state.
+                Button {
+                    finish()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Close and stop negotiating")
             }
 
             HStack(spacing: 18) {
@@ -435,7 +457,7 @@ struct NegotiationSheet: View {
                 Label("Transfer agreed for \(deal?.lastOffer?.formatted() ?? asking.formatted()) Club Cash.", systemImage: "checkmark.seal.fill")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.studyGreen)
-                Button("Done") { store.walkAwayFromNegotiation() }
+                Button("Done") { finish() }
                     .buttonStyle(.bentoProminent)
                     .bentoTint(.primary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -445,7 +467,7 @@ struct NegotiationSheet: View {
                     .foregroundStyle(.orange)
                 HStack {
                     Spacer()
-                    Button("Close") { store.walkAwayFromNegotiation() }
+                    Button("Close") { finish() }
                 }
             case .open:
                 HStack(spacing: 8) {
@@ -469,7 +491,7 @@ struct NegotiationSheet: View {
                     .buttonStyle(.bentoProminent)
                     .bentoTint(.primary)
                     .disabled(store.state.clubCash < asking)
-                    Button("Walk away") { store.walkAwayFromNegotiation() }
+                    Button("Walk away") { finish() }
                 }
                 Text("The owner has \(patience)% patience left. Serious offers close the gap; lowballs burn it.")
                     .font(.system(size: 9))

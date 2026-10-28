@@ -118,6 +118,22 @@ final class AppStore {
     /// throwaway save directory.
     private static func runSelfTest() {
         Self.selfTestRunning = true
+
+        // The shipped data file must carry real ceilings: a file where every player is
+        // already at their potential leaves the whole database unable to grow.
+        let databasePlayers = FcDatabase.shared.players
+        let withRoom = databasePlayers.filter { $0.pot > $0.ovr }.count
+        guard databasePlayers.count > 1_000, Double(withRoom) / Double(databasePlayers.count) > 0.5 else {
+            print("SELF TEST FAIL: fc-database potentials look unfilled (\(withRoom)/\(databasePlayers.count) with room to grow)")
+            exit(1)
+        }
+        let young = databasePlayers.filter { $0.age <= 21 }
+        let youngWithRoom = young.filter { $0.pot > $0.ovr }.count
+        guard young.isEmpty || Double(youngWithRoom) / Double(young.count) > 0.95 else {
+            print("SELF TEST FAIL: young database players cannot still grow (\(youngWithRoom)/\(young.count))")
+            exit(1)
+        }
+
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory.appendingPathComponent("StudyManagerFC-self-test-\(UUID().uuidString)", isDirectory: true)
         try? fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -194,7 +210,65 @@ final class AppStore {
                 print("SELF TEST FAIL: edits did not persist")
                 exit(1)
             }
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward (no double-pay), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists")
+            // Schema 6: an existing career adopts the data file's real potential, so a
+            // player signed before the data carried ceilings can still grow.
+            if let prospect = FcDatabase.shared.players.first(where: { $0.age <= 20 && $0.pot > $0.ovr }) {
+                var legacy = GameState.fresh()
+                legacy.schemaVersion = 5
+                legacy.managedClubID = "barcelona"
+                var signed = PlayerFactory.player(from: prospect, name: "Prospect", season: 1)
+                signed.potential = signed.overall
+                legacy.players = [signed]
+                let legacyStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("legacy", isDirectory: true))
+                try legacyStore.save(legacy)
+                let migrated = AppStore(persistence: legacyStore)
+                guard let player = migrated.state.players.first,
+                      player.potential == max(player.overall, prospect.potential),
+                      player.potential > player.overall else {
+                    print("SELF TEST FAIL: schema 6 did not adopt the database potential")
+                    exit(1)
+                }
+            }
+
+            // Transfer listing: a listed player draws an offer after a match, the offer is
+            // negotiable up to a hidden ceiling, and accepting sells the player and pays out.
+            let transferStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("transfers", isDirectory: true))
+            let market = AppStore(persistence: transferStore)
+            try market.startCareer(with: "arsenal")
+            guard let forSale = market.state.players.last else {
+                print("SELF TEST FAIL: started career without players")
+                exit(1)
+            }
+            market.setPlayerListed(forSale.id, listed: true)
+            guard AppStore(persistence: transferStore).state.players.contains(where: { $0.id == forSale.id && $0.isUserListing }) else {
+                print("SELF TEST FAIL: the transfer list flag did not persist")
+                exit(1)
+            }
+            var marketDraft = market.state
+            market.makeTransferOffers(into: &marketDraft)
+            market.commit(marketDraft)
+            guard let offer = market.state.transferOffers.first,
+                  offer.playerID == forSale.id,
+                  offer.ceiling >= offer.amount,
+                  offer.marketValue > 0 else {
+                print("SELF TEST FAIL: a listed player drew no usable offer")
+                exit(1)
+            }
+            let cashBeforeSale = market.state.clubCash
+            guard case .improved(let raised) = market.counterTransferOffer(offer.id, amount: offer.ceiling + 500),
+                  raised == offer.ceiling else {
+                print("SELF TEST FAIL: countering above the ceiling did not settle at the ceiling")
+                exit(1)
+            }
+            market.acceptTransferOffer(offer.id)
+            guard !market.state.players.contains(where: { $0.id == forSale.id }),
+                  market.state.clubCash == cashBeforeSale + offer.ceiling,
+                  market.state.transferOffers.isEmpty else {
+                print("SELF TEST FAIL: accepting an offer did not sell the player for the agreed fee")
+                exit(1)
+            }
+
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward (no double-pay), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -236,6 +310,21 @@ final class AppStore {
                     age: player.age,
                     databaseID: dbID
                 )
+            }
+        }
+        if draft.schemaVersion < 6 {
+            // The data file used to arrive without potentials, so careers written then
+            // hold a derived ceiling. The file now carries the game's own potentials for
+            // most rows, so adopt those, floored at the rating a player has already reached.
+            for index in draft.players.indices {
+                guard let dbID = draft.players[index].dbID,
+                      let record = FcDatabase.shared.player(id: dbID) else { continue }
+                draft.players[index].potential = max(draft.players[index].overall, record.potential)
+            }
+            for index in draft.freeAgents.indices {
+                guard let dbID = draft.freeAgents[index].dbID,
+                      let record = FcDatabase.shared.player(id: dbID) else { continue }
+                draft.freeAgents[index].potential = max(draft.freeAgents[index].overall, record.potential)
             }
         }
         draft.schemaVersion = GameState.currentSchemaVersion
@@ -664,21 +753,6 @@ final class AppStore {
         negotiation = nil
     }
 
-    /// Place one of your players on the transfer market for sale.
-    /// - Parameter price: Club Cash asking price; set to nil to use the default OVR-based price.
-    func listPlayer(for player: Player, price: Int? = nil) {
-        // Cannot list if player already has isUserListing=true
-        if state.players.contains(where: { $0.id == player.id && $0.isUserListing }) { return }
-        // Mark the player as listed (commit persists this)
-        var draft = state
-        draft.players.indices.forEach { i in
-            if draft.players[i].id == player.id {
-                draft.players[i].isUserListing = true
-                draft.players[i].listingPrice = price
-            }
-        }
-    }
-
     private func completeSigning(_ listing: TransferListing, price: Int) {
         guard price <= state.clubCash else {
             if var deal = negotiation {
@@ -796,7 +870,6 @@ final class AppStore {
             subtopicName: resolvedSubtopic?.name
         )
         draft.recentSessions.insert(session, at: 0)
-        rollTransferOffer(into: &draft)
         commit(draft)
         announceLevelUps(levelsGained)
     }
@@ -1103,6 +1176,8 @@ final class AppStore {
             draft.lineup.removeValue(forKey: key)
         }
         draft.bench.removeAll { $0 == playerID }
+        // Releasing a listed player cancels any offer already on the table for him.
+        draft.transferOffers.removeAll { $0.playerID == playerID }
         draft.clubCash += player.releaseValue
         commit(draft)
         return player.releaseValue
@@ -1338,6 +1413,8 @@ final class AppStore {
         draft.season = season
         draft.scoringLedger = ledger
         if userFixture != nil {
+            // A match is the moment rivals respond to the transfer list.
+            makeTransferOffers(into: &draft)
             draft.availableMatchMinutes -= GameRules.minutesPerMatch
             draft.matchesSinceAcademyIntake += 1
             if draft.matchesSinceAcademyIntake >= GameRules.matchesPerAcademyIntake {
@@ -1387,6 +1464,10 @@ final class AppStore {
         let retiredIDs = Set(squadResult.retiredIDs)
         draft.lineup = draft.lineup.filter { !retiredIDs.contains($0.value) }
         draft.bench.removeAll { retiredIDs.contains($0) }
+        // A retiring player takes any outstanding offer for him with him.
+        draft.transferOffers.removeAll { offer in
+            !draft.players.contains { $0.id == offer.playerID }
+        }
         draft.seasonNumber += 1
         var youthCount = 10
         let prospects = PlayerFactory.makeYouthProspects(season: draft.seasonNumber, count: youthCount)
@@ -1466,32 +1547,97 @@ final class AppStore {
 
     // MARK: - Transfer offers
 
-    /// Rolls for an offer on a listed player after a study session, extra session or match.
-    /// The chance is deliberately below 1 so offers are occasional, not guaranteed.
-    func rollTransferOffer(into draft: inout GameState) {
-        guard Double.random(in: 0..<1) < GameRules.transferOfferChance else { return }
-        let listed = draft.players.filter { $0.isUserListing }
-        guard let player = listed.randomElement() else { return }
-        let base = player.marketValue
-        let amount = Int((Double(base) * Double.random(in: 0.9...1.3)).rounded())
+    /// What a bidding club did in response to a counter offer.
+    enum OfferOutcome: Equatable {
+        case accepted(Int)
+        case improved(Int)
+        case withdrawn
+        /// The offer is no longer on the table (sold, declined or already resolved).
+        case expired
+    }
+
+    /// One fresh offer per transfer-listed player after every match you play. The coin flip
+    /// decides quality: a good club opens around the market value and will stretch above it,
+    /// a bad one opens well under and never reaches it. A pending offer is left alone, so
+    /// nothing the user has not answered is replaced behind their back.
+    func makeTransferOffers(into draft: inout GameState) {
+        let listed = draft.players.filter(\.isUserListing)
+        guard !listed.isEmpty else { return }
         let clubs = FcDatabase.shared.clubs.filter { $0.id != draft.managedClubID }
-        let clubName = clubs.randomElement()?.name ?? "A rival club"
-        draft.transferOffers.append(
-            TransferOffer(id: UUID(), playerID: player.id, clubName: clubName, amount: max(1, amount), createdAt: Date())
-        )
+        for player in listed {
+            guard !draft.transferOffers.contains(where: { $0.playerID == player.id }) else { continue }
+            let value = max(1, player.marketValue)
+            let good = Double.random(in: 0..<1) < GameRules.transferOfferGoodChance
+            let bidShare = good ? Double.random(in: GameRules.transferOfferGoodBidRange) : Double.random(in: GameRules.transferOfferBadBidRange)
+            let ceilingShare = good ? Double.random(in: GameRules.transferOfferGoodCeilingRange) : Double.random(in: GameRules.transferOfferBadCeilingRange)
+            let bid = max(1, Int((Double(value) * bidShare).rounded()))
+            let ceiling = max(bid, Int((Double(value) * ceilingShare).rounded()))
+            draft.transferOffers.append(
+                TransferOffer(
+                    id: UUID(),
+                    playerID: player.id,
+                    clubName: clubs.randomElement()?.name ?? "A rival club",
+                    amount: bid,
+                    createdAt: Date(),
+                    marketValue: value,
+                    ceiling: ceiling,
+                    patience: 100,
+                    isGood: good
+                )
+            )
+        }
     }
 
     /// Takes an offer: the player leaves the squad and the fee is paid to the club.
     func acceptTransferOffer(_ offerID: UUID) {
         guard let offer = state.transferOffers.first(where: { $0.id == offerID }) else { return }
         var draft = state
-        draft.transferOffers.removeAll { $0.playerID == offer.playerID || $0.id == offerID }
-        draft.players.removeAll { $0.id == offer.playerID }
-        for (key, value) in draft.lineup where value == offer.playerID {
+        sell(offer.playerID, price: offer.amount, in: &draft)
+    }
+
+    /// Answers an offer with a number of your own. The club accepts anything at or below its
+    /// hidden ceiling and otherwise comes up to that ceiling while losing patience; three
+    /// pushes past its limit and it walks. Asking for less than the current bid simply
+    /// accepts what is already on the table.
+    @discardableResult
+    func counterTransferOffer(_ offerID: UUID, amount: Int) -> OfferOutcome {
+        guard let index = state.transferOffers.firstIndex(where: { $0.id == offerID }) else { return .expired }
+        var draft = state
+        let offer = draft.transferOffers[index]
+        let ask = max(0, amount)
+
+        if ask <= offer.amount {
+            sell(offer.playerID, price: offer.amount, in: &draft)
+            return .accepted(offer.amount)
+        }
+        if ask <= offer.ceiling {
+            sell(offer.playerID, price: ask, in: &draft)
+            return .accepted(ask)
+        }
+
+        var pushed = offer
+        pushed.patience = max(0, offer.patience - GameRules.transferOfferCounterPatienceCost)
+        guard pushed.patience > 0 else {
+            draft.transferOffers.removeAll { $0.id == offerID }
+            commit(draft)
+            return .withdrawn
+        }
+        pushed.amount = pushed.ceiling
+        draft.transferOffers[index] = pushed
+        commit(draft)
+        return .improved(pushed.amount)
+    }
+
+    /// Moves a player out of the squad for an agreed fee, clearing every pending offer for
+    /// him and every reference in the lineup and bench.
+    private func sell(_ playerID: UUID, price: Int, in draft: inout GameState) {
+        draft.clubCash += max(0, price)
+        draft.players.removeAll { $0.id == playerID }
+        for (key, value) in draft.lineup where value == playerID {
             draft.lineup.removeValue(forKey: key)
         }
-        draft.bench.removeAll { $0 == offer.playerID }
-        draft.clubCash += offer.amount
+        draft.bench.removeAll { $0 == playerID }
+        draft.transferOffers.removeAll { $0.playerID == playerID }
         commit(draft)
     }
 

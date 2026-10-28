@@ -409,8 +409,9 @@ enum PlayerFactory {
         }
     }
 
-    /// A potential for a database row whose data file carries none. Seeded by the database
-    /// id so a player keeps the same ceiling on every launch and in every save.
+    /// A potential for a database row whose data file carries none (a file that has not been
+    /// through `Scripts/fill-potential.py`). Seeded by the database id so a player keeps the
+    /// same ceiling on every launch and in every save.
     static func databasePotential(overall: Int, age: Int, databaseID: Int) -> Int {
         var generator = SeededGenerator(seed: StableSeed.value(for: "fc-pot-\(databaseID)"))
         return min(99, overall + potentialBoost(age: age, highPotential: false, using: &generator))

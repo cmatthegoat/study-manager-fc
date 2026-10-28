@@ -3,6 +3,9 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(AppStore.self) private var store
 
+    /// Set by the shell so the "recent study" card can jump to the full, searchable log.
+    var onOpenLog: (() -> Void)? = nil
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -27,7 +30,7 @@ struct DashboardView: View {
                     .frame(width: 350)
                 }
 
-                RecentSessionsCard()
+                RecentSessionsCard(onOpenLog: onOpenLog)
             }
             .padding(28)
             .frame(maxWidth: 1400)
@@ -133,35 +136,37 @@ private struct FocusTimerCard: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("FOCUS TIMER")
-                        .font(.system(size: 10, weight: .black, design: .rounded))
-                        .tracking(1.4)
-                        .foregroundStyle(.white.opacity(0.7))
-                    Text("One minute, one step forward")
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                }
-                Spacer()
+            HStack(alignment: .center) {
+                SectionHeader(
+                    title: "Focus Timer",
+                    subtitle: "One minute, one step forward",
+                    symbol: "timer"
+                )
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(store.isTimerRunning ? Color.studyGold : Color.white.opacity(0.35))
+                        .fill(store.isTimerRunning ? Color.studyGreen : Color.secondary.opacity(0.45))
                         .frame(width: 7, height: 7)
                     Text(store.isTimerRunning ? "RUNNING" : "READY")
                         .font(.system(size: 8, weight: .black, design: .rounded))
                         .tracking(0.8)
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
-                .background(.white.opacity(0.11), in: Capsule())
+                .background(Color.primary.opacity(0.05), in: Capsule())
             }
 
             Text(timeText)
                 .font(.system(size: 64, weight: .black, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.studyGreen, Color.studyTeal],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .shadow(color: Color.studyGreen.opacity(0.35), radius: 14)
                 .contentTransition(.numericText())
                 .frame(maxWidth: .infinity)
 
@@ -182,8 +187,7 @@ private struct FocusTimerCard: View {
                     .padding(.vertical, 9)
                 }
                 .buttonStyle(.bentoProminent)
-                .bentoTint(.white)
-                .foregroundStyle(Color.studyInk)
+                .bentoTint(.primary)
 
                 if store.isTimerRunning || store.timerElapsedSeconds > 0 {
                     Button {
@@ -274,24 +278,11 @@ private struct FocusTimerCard: View {
             if store.lastTimerSessionMinutes > 0 && !store.isTimerRunning {
                 Text("Last session logged: \(store.lastTimerSessionMinutes) minutes")
                     .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(22)
-        .background(
-            LinearGradient(
-                colors: [Color(hex: "1D6A48"), Color(hex: "12372D")],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 26, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
-        )
-        .shadow(color: Color.studyGreen.opacity(0.2), radius: 18, y: 8)
+        .surface(padding: 22)
     }
 
     private func timerLegend(symbol: String, text: String) -> some View {
@@ -301,7 +292,7 @@ private struct FocusTimerCard: View {
             Text(text)
                 .font(.system(size: 9, weight: .medium))
         }
-        .foregroundStyle(.white.opacity(0.66))
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -618,10 +609,33 @@ private struct StudyStatsGrid: View {
 
 private struct RecentSessionsCard: View {
     @Environment(AppStore.self) private var store
+    var onOpenLog: (() -> Void)?
+
+    private var total: Int { store.state.recentSessions.count }
+    private var hidden: Int { max(0, total - 8) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader(title: "Recent Study", subtitle: "Your latest logged sessions", symbol: "clock.arrow.circlepath")
+            HStack(alignment: .firstTextBaseline) {
+                SectionHeader(
+                    title: "Recent Study",
+                    subtitle: hidden > 0
+                        ? "Showing the latest 8 of \(total) entries"
+                        : "Your latest logged sessions",
+                    symbol: "clock.arrow.circlepath"
+                )
+                if let onOpenLog, !store.state.recentSessions.isEmpty {
+                    Button {
+                        onOpenLog()
+                    } label: {
+                        Label(hidden > 0 ? "View all \(total)" : "Open log", systemImage: "arrow.up.right.square")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    }
+                    .buttonStyle(.bentoBordered)
+                    .bentoTint(.primary)
+                    .help("Search every study entry")
+                }
+            }
             if store.state.recentSessions.isEmpty {
                 EmptyStateView(
                     symbol: "timer",

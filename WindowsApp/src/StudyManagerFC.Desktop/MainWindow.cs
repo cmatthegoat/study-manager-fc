@@ -10,6 +10,7 @@ namespace StudyManagerFC.Desktop;
 public enum MainSection
 {
     Dashboard,
+    StudyLog,
     Subjects,
     Squad,
     Transfers,
@@ -149,6 +150,7 @@ public class MainWindow : Window
     private static string SectionTitle(MainSection section) => section switch
     {
         MainSection.Dashboard => "◔  Dashboard",
+        MainSection.StudyLog => "📜  Study Log",
         MainSection.Subjects => "📚  Subjects",
         MainSection.Squad => "⚽  Squad",
         MainSection.Transfers => "↔  Transfers",
@@ -170,6 +172,7 @@ public class MainWindow : Window
             page = section switch
             {
                 MainSection.Dashboard => new DashboardView(Store, this),
+                MainSection.StudyLog => new StudyLogView(Store, this),
                 MainSection.Subjects => new SubjectsView(Store, this),
                 MainSection.Squad => new SquadView(Store, this),
                 MainSection.Transfers => new TransfersView(Store, this),

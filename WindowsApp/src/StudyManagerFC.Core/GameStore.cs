@@ -377,6 +377,18 @@ public sealed class GameStore
         Commit(draft);
     }
 
+    /// <summary>
+    /// Removes a logged session from the study log. Cash and XP already banked stay with
+    /// the club — the entry itself is what disappears. Mirrors the macOS Study Log.
+    /// </summary>
+    public void DeleteStudySession(Guid id)
+    {
+        if (State.RecentSessions.All(session => session.Id != id)) return;
+        var draft = State.Clone();
+        draft.RecentSessions.RemoveAll(session => session.Id == id);
+        Commit(draft);
+    }
+
     // MARK: - Subtopics and subject tracking
 
     public IReadOnlyList<Subtopic> Subtopics => State.Subtopics;
