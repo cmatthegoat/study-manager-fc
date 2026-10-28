@@ -12,6 +12,37 @@ struct ExamsView: View {
     @State private var classRank = ""
     @State private var overallRank = ""
     @State private var date = Date()
+    @State private var workKind: WorkKind = .homework
+
+    /// Which kind of logged work the marks chart is showing. Assessments are charted
+    /// separately above; these are the homework, past papers and exam questions logged
+    /// through the timer and quick log.
+    private enum WorkKind: String, CaseIterable, Identifiable {
+        case homework
+        case pastPaper
+        case examQuestions
+        case all
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .homework: "Homework"
+            case .pastPaper: "Past Papers"
+            case .examQuestions: "Exam Qs"
+            case .all: "All Work"
+            }
+        }
+
+        func matches(_ session: StudySession) -> Bool {
+            switch self {
+            case .homework: session.kind == .homework
+            case .pastPaper: session.kind == .pastPaper
+            case .examQuestions: session.kind == .examQuestions
+            case .all: session.kind != .focusSession
+            }
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -23,6 +54,7 @@ struct ExamsView: View {
                 )
                 addCard
                 marksGraphCard
+                workMarksCard
                 rankGraphCard
                 listCard
             }
@@ -121,6 +153,77 @@ struct ExamsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .surface(padding: 18)
+    }
+
+    /// Marks from the work logged through the timer and quick log, charted the same way the
+    /// assessments are — one series per subject, so a weak module stands out at a glance.
+    private var workMarksCard: some View {
+        let sessions = workSessions
+        let aggregate = StudyAggregate.build(from: sessions)
+        return VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(
+                title: "Homework & Practice Marks",
+                subtitle: "Every marked piece you logged, as a percentage",
+                symbol: "chart.line.uptrend.xyaxis"
+            )
+
+            Picker("Kind", selection: $workKind) {
+                ForEach(WorkKind.allCases) { kind in
+                    Text(kind.title).tag(kind)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if sessions.isEmpty {
+                Text("Log homework, a past paper or exam questions with marks and they will chart here.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            } else {
+                Chart(sessions) { session in
+                    LineMark(
+                        x: .value("Date", session.date),
+                        y: .value("Mark %", session.percentage ?? 0)
+                    )
+                    .foregroundStyle(by: .value("Subject", session.subject?.shortName ?? "Other"))
+                    PointMark(
+                        x: .value("Date", session.date),
+                        y: .value("Mark %", session.percentage ?? 0)
+                    )
+                    .foregroundStyle(by: .value("Subject", session.subject?.shortName ?? "Other"))
+                }
+                .chartYScale(domain: 0...100)
+                .frame(height: 200)
+
+                HStack(spacing: 18) {
+                    workStat("Pieces", "\(aggregate.sessions)")
+                    workStat("Average", aggregate.averagePercentage.map { "\($0)%" } ?? "–")
+                    workStat("Marks", "\(aggregate.marksObtained)/\(aggregate.marksTotal)")
+                    workStat("Best", "\(sessions.compactMap(\.percentage).max() ?? 0)%")
+                    Spacer()
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(padding: 18)
+    }
+
+    private var workSessions: [StudySession] {
+        store.state.recentSessions
+            .filter { $0.percentage != nil && workKind.matches($0) }
+            .sorted { $0.date < $1.date }
+    }
+
+    private func workStat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label.uppercased())
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .tracking(0.8)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .monospacedDigit()
+        }
     }
 
     private var rankGraphCard: some View {

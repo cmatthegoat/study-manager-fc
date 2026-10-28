@@ -6,6 +6,12 @@ struct StudyManagerFCApp: App {
     @State private var store = AppStore()
 
     init() {
+        // A diagnostic for the marking pipeline: availability, an optional file to OCR, and a
+        // small paper marked with the real on-device model.
+        if let flag = CommandLine.arguments.firstIndex(of: "--verify-marking") {
+            let path = CommandLine.arguments.count > flag + 1 ? CommandLine.arguments[flag + 1] : nil
+            Self.runMarkingCheck(path: path)
+        }
         // A packaging check: the game database lives beside the app, and this proves the
         // shipped bundle can find and decode it without opening a window.
         if CommandLine.arguments.contains("--verify-database") {
@@ -24,6 +30,52 @@ struct StudyManagerFCApp: App {
                 .environment(store)
                 .preferredColorScheme(.dark)
         }
+    }
+}
+
+extension StudyManagerFCApp {
+    /// Runs the marking diagnostic and exits. Waiting on the model needs the main run loop
+    /// alive, so this pumps it rather than blocking on a semaphore.
+    fileprivate static func runMarkingCheck(path: String?) {
+        print("marking availability: \(MarkingService.availability)")
+        if let path {
+            do {
+                let text = try PaperText.text(from: URL(fileURLWithPath: path))
+                let preview = text.prefix(160).replacingOccurrences(of: "\n", with: " ")
+                print("ocr chars: \(text.count)")
+                print("ocr preview: \(preview)")
+            } catch {
+                print("ocr failed: \(error.localizedDescription)")
+            }
+        }
+        guard MarkingService.availability.isAvailable else { exit(3) }
+
+        let request = MarkingRequest(
+            subject: .ext1Maths,
+            title: "Diagnostic paper",
+            totalMarks: 10,
+            answerText: "Q1: 2x = 10, so x = 5. Q2: the tangent's gradient at that point is 3.",
+            guidelinesText: "Q1 (5 marks): correct value of x with working. Q2 (5 marks): correct gradient of 3.",
+            comments: ""
+        )
+        var finished = false
+        Task {
+            do {
+                let result = try await MarkingService.mark(request)
+                print("marked: \(result.totalAwarded)/\(result.totalOutOf) across \(result.questions.count) questions")
+                for question in result.questions {
+                    print("  \(question.question): \(question.awarded)/\(question.outOf) — \(question.reason)")
+                }
+                print("feedback: \(result.feedback)")
+            } catch {
+                print("mark failed: \(error.localizedDescription)")
+            }
+            finished = true
+        }
+        while !finished {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        exit(0)
     }
 }
 
@@ -48,6 +100,7 @@ enum MainSection: String, CaseIterable, Identifiable {
     case transfers
     case europe
     case exams
+    case marking
 
     var id: String { rawValue }
 
@@ -61,6 +114,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .transfers: "Transfers"
         case .europe: "Champions League"
         case .exams: "Exams"
+        case .marking: "AI Marking"
         }
     }
 
@@ -74,6 +128,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .transfers: "arrow.left.arrow.right"
         case .europe: "trophy"
         case .exams: "doc.text.magnifyingglass"
+        case .marking: "wand.and.stars"
         }
     }
 }
@@ -167,6 +222,8 @@ struct MainTabView: View {
             CompetitionView()
         case .exams:
             ExamsView()
+        case .marking:
+            MarkingView()
         }
     }
 }

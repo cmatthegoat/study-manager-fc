@@ -268,7 +268,22 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward (no double-pay), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell")
+            // The marking parser must survive a model that wraps its JSON in a code fence or
+            // a sentence, clamp a mark above the available total, and reject prose.
+            let fencedReply = "Here are the marks:\n```json\n{\"questions\":[{\"question\":\"Q1\",\"awarded\":5,\"outOf\":5,\"reason\":\"ok\"},{\"question\":\"Q2\",\"awarded\":9,\"outOf\":7,\"reason\":\"over\"}],\"feedback\":\"fine\"}\n```"
+            guard let parsedMarks = try? MarkingService.parse(fencedReply),
+                  parsedMarks.totalOutOf == 12,
+                  parsedMarks.totalAwarded == 12,
+                  parsedMarks.questions.count == 2 else {
+                print("SELF TEST FAIL: the marking parser mishandled fenced JSON or clamping")
+                exit(1)
+            }
+            guard (try? MarkingService.parse("I think it deserves a pass.")) == nil else {
+                print("SELF TEST FAIL: the marking parser accepted prose as marks")
+                exit(1)
+            }
+
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward (no double-pay), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, marking JSON parsing")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {

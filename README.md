@@ -5,17 +5,31 @@ XP and match minutes; spend the minutes to unlock Champions League fixtures; man
 a squad, a transfer market and a youth academy while your subjects, topics, todos
 and exam results feed straight into the club's economy.
 
-Two desktop apps share one set of rules, one dataset and one save file:
+A macOS app: SwiftUI on Swift Package Manager, targeting macOS 14 and up.
 
-| | Platform | UI |
-| --- | --- | --- |
-| `Sources/StudyManagerFC` | macOS 14+ | SwiftUI, Swift Package Manager |
-| `WindowsApp` | Windows | Avalonia on .NET 8 |
+The Windows (Avalonia) build used to live here as a parallel app sharing the same
+rules and save file. It now lives in its own repository, so this one is Mac-only;
+the last revision here that contained it is `7d973ec`.
 
 ## What's in it
 
 **macOS sections** — Dashboard, Study Log, Subjects, Todos, Squad, Transfers,
-Champions League, Exams.
+Champions League, Exams, AI Marking.
+
+**Automatic marking.** The AI Marking tab marks a past paper against a rubric with
+Apple's on-device model, so nothing is uploaded, there is no account and no cost
+per paper. Guidelines and your written answer can be typed, pasted, or added as
+**PNG, JPEG or PDF** files; images and scanned PDFs are read with Vision OCR
+first, because the model only accepts text. Results come back per question with a
+reason, are shown as a draft for review, and are saved into the assessment log
+with one button. It needs macOS 26 or later on an Apple silicon Mac with Apple
+Intelligence switched on; the tab explains what is missing otherwise, and the
+macOS 14 minimum still builds and runs everything else.
+
+**Marks charts.** The Exams tab charts assessments *and* the work you log through
+the timer: homework, past papers and exam-style questions each have marks over
+time, with a segmented switch between the three and an all-work view, plus pieces,
+average, marks and best-score figures.
 
 **Transfer list.** Open a player in the Squad tab and add him to the transfer
 list instead of releasing him for a fraction of his value. After every match you
@@ -66,28 +80,14 @@ Scripts/package-app.sh                      # writes dist/StudyManagerFC.app
 ```
 
 Requires Xcode 15+ / Swift 5.9 and macOS 14 (the package targets `.macOS(.v14)`).
-
-### Windows
-
-```bash
-WindowsApp/tools/bootstrap-dotnet.sh        # once: private .NET 8 SDK in .tools/
-dotnet test WindowsApp/tests/StudyManagerFC.Tests/StudyManagerFC.Tests.csproj
-Scripts/package-windows.sh                  # tests, publishes win-x64, zips it
-```
-
-See [WindowsApp/README.md](WindowsApp/README.md) for the full parity notes — the
-rules are identical by construction, not reimplemented by eye.
+Automatic marking needs macOS 26 or later on an Apple silicon Mac with Apple
+Intelligence enabled; everything else runs on macOS 14.
 
 ## Save files
 
-Both builds write the same `career.json`, so a career moves between machines:
+The career is written to `~/Library/Application Support/StudyManagerFC/career.json`.
 
-- macOS: `~/Library/Application Support/StudyManagerFC/career.json`
-- Windows: `%APPDATA%\StudyManagerFC\career.json`
-
-Saves are schema-versioned and older ones migrate on load. One caveat: a
-database-era career (players carrying a `dbID`) should stay on the Mac, because
-the Windows build drops those fields when it writes.
+Saves are schema-versioned and older ones migrate on load.
 
 ## Player database
 
@@ -130,8 +130,7 @@ data file's real potential, floored at the rating they have already reached.
 ```
 Package.swift              SwiftPM manifest (macOS app)
 Sources/StudyManagerFC/    Swift app: models, engines, store, views, theme, data
-Scripts/                   extract-fc-database.py, fill-potential.py, package-app.sh, package-windows.sh
-WindowsApp/                Avalonia app: Core (rules) / Desktop (UI) / tests
+Scripts/                   extract-fc-database.py, fill-potential.py, package-app.sh
 ```
 
 Large and generated paths are ignored by `.gitignore`: `.build/`, `dist/`,
