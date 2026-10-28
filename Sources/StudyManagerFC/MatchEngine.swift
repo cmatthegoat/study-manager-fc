@@ -108,8 +108,12 @@ enum MatchEngine {
         )
     }
 
-    static func userMetricsLineup(players: [Player], lineup: [String: UUID]) -> [Player] {
-        LineupSlot.all.compactMap { slot in
+    static func userMetricsLineup(
+        players: [Player],
+        lineup: [String: UUID],
+        slots: [LineupSlot] = LineupSlot.all
+    ) -> [Player] {
+        slots.compactMap { slot in
             guard let id = lineup[slot.id] else { return nil }
             return players.first(where: { $0.id == id })
         }

@@ -72,23 +72,17 @@ private struct QuickTodoCard: View {
                 .onSubmit(add)
 
             HStack(spacing: 10) {
-                Picker("Subject", selection: $selectedSubject) {
-                    ForEach(StudySubject.allCases) { subject in
-                        Text(subject.shortName).tag(subject)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: 160)
-                Picker("Subtopic", selection: $selectedSubtopicID) {
-                    Text("No subtopic").tag(UUID?.none)
-                    ForEach(selectedSubtopics) { topic in
-                        Text(topic.name).tag(Optional(topic.id))
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: 170)
+                BentoMenu(
+                    selection: $selectedSubject,
+                    options: StudySubject.allCases.map { BentoOption($0.shortName, value: $0) },
+                    width: 150
+                )
+                BentoMenu(
+                    selection: $selectedSubtopicID,
+                    options: [BentoOption("No subtopic", value: UUID?.none)]
+                        + selectedSubtopics.map { BentoOption($0.name, value: Optional($0.id)) },
+                    width: 170
+                )
                 Spacer(minLength: 0)
                 Button(action: add) {
                     Label("Add Task", systemImage: "plus")
@@ -127,11 +121,26 @@ private struct QuickTodoCard: View {
 
 private struct FocusTimerCard: View {
     @Environment(AppStore.self) private var store
+    /// The paused session's review sheet. It can also be reopened from the card if the
+    /// sheet is dismissed without logging.
+    @State private var showingReview = false
 
     private var timeText: String {
         let minutes = store.timerElapsedSeconds / 60
         let seconds = store.timerElapsedSeconds % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    private var timerStatusText: String {
+        if store.isTimerRunning { return "RUNNING" }
+        if store.pendingTimerMinutes != nil { return "PAUSED" }
+        return "READY"
+    }
+
+    private var timerStatusColor: Color {
+        if store.isTimerRunning { return .studyGreen }
+        if store.pendingTimerMinutes != nil { return .studyGold }
+        return .secondary.opacity(0.45)
     }
 
     var body: some View {
@@ -144,9 +153,9 @@ private struct FocusTimerCard: View {
                 )
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(store.isTimerRunning ? Color.studyGreen : Color.secondary.opacity(0.45))
+                        .fill(timerStatusColor)
                         .frame(width: 7, height: 7)
-                    Text(store.isTimerRunning ? "RUNNING" : "READY")
+                    Text(timerStatusText)
                         .font(.system(size: 8, weight: .black, design: .rounded))
                         .tracking(0.8)
                         .foregroundStyle(.secondary)
@@ -173,14 +182,18 @@ private struct FocusTimerCard: View {
             HStack(spacing: 12) {
                 Button {
                     if store.isTimerRunning {
+                        // Pausing banks the minutes and opens the review sheet, so nothing
+                        // is filed until the type, subject, topic and marks are right.
                         store.pauseTimer()
+                    } else if store.pendingTimerMinutes != nil {
+                        showingReview = true
                     } else {
                         store.startTimer()
                     }
                 } label: {
                     Label(
-                        store.isTimerRunning ? "Pause & Log" : "Start Focus Timer",
-                        systemImage: store.isTimerRunning ? "pause.fill" : "play.fill"
+                        store.isTimerRunning ? "Finish Session" : (store.pendingTimerMinutes != nil ? "Review & Log" : "Start Focus Timer"),
+                        systemImage: store.isTimerRunning ? "pause.fill" : (store.pendingTimerMinutes != nil ? "checkmark.circle" : "play.fill")
                     )
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .frame(maxWidth: .infinity)
@@ -189,9 +202,10 @@ private struct FocusTimerCard: View {
                 .buttonStyle(.bentoProminent)
                 .bentoTint(.primary)
 
-                if store.isTimerRunning || store.timerElapsedSeconds > 0 {
+                if store.isTimerRunning || store.timerElapsedSeconds > 0 || store.pendingTimerMinutes != nil {
                     Button {
                         store.resetTimer()
+                        store.discardTimerSession()
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .bold))
@@ -200,56 +214,48 @@ private struct FocusTimerCard: View {
                     }
                     .buttonStyle(.bentoBordered)
                     .bentoTint(.white)
+                    .help("Discard this session without logging it")
                 }
             }
 
-            Picker("Task", selection: Binding(
-                get: { store.timerTodoID },
-                set: { store.setTimerTodo($0) }
-            )) {
-                Text("No linked task").tag(UUID?.none)
-                ForEach(store.state.todos.filter { !$0.isCompleted }) { todo in
-                    Text(todo.title).tag(UUID?.some(todo.id))
-                }
-            }
-            .labelsHidden()
-            .disabled(store.isTimerRunning)
+            BentoMenu(
+                selection: Binding(
+                    get: { store.timerTodoID },
+                    set: { store.setTimerTodo($0) }
+                ),
+                options: [BentoOption("No linked task", value: UUID?.none)]
+                    + store.state.todos.filter { !$0.isCompleted }
+                        .map { BentoOption($0.title, value: Optional($0.id)) }
+            )
 
             HStack(spacing: 10) {
-                Picker("Activity", selection: Binding(
-                    get: { store.timerKind },
-                    set: { store.timerKind = $0; store.timerMarksObtained = nil; store.timerMarksTotal = nil }
-                )) {
-                    Text("Focus").tag(StudyActivityKind.focusSession)
-                    Text("Homework").tag(StudyActivityKind.homework)
-                    Text("Past Paper").tag(StudyActivityKind.pastPaper)
-                    Text("Exam Qs").tag(StudyActivityKind.examQuestions)
-                }
-                .labelsHidden()
-                .disabled(store.isTimerRunning)
+                BentoMenu(
+                    selection: Binding(
+                        get: { store.timerKind },
+                        set: { store.timerKind = $0; store.timerMarksObtained = nil; store.timerMarksTotal = nil }
+                    ),
+                    options: StudyActivityKind.allCases.map { BentoOption($0.title, value: $0, symbol: $0.systemImage) },
+                    width: 130
+                )
 
-                Picker("Subject", selection: Binding(
-                    get: { store.timerSubject },
-                    set: { store.timerSubject = $0; store.timerSubtopicID = nil }
-                )) {
-                    ForEach(StudySubject.allCases) { subj in
-                        Text(subj.shortName).tag(subj)
-                    }
-                }
-                .labelsHidden()
-                .disabled(store.isTimerRunning)
+                BentoMenu(
+                    selection: Binding(
+                        get: { store.timerSubject },
+                        set: { store.timerSubject = $0; store.timerSubtopicID = nil }
+                    ),
+                    options: StudySubject.allCases.map { BentoOption($0.shortName, value: $0) },
+                    width: 120
+                )
 
-                Picker("Topic", selection: Binding(
-                    get: { store.timerSubtopicID },
-                    set: { store.timerSubtopicID = $0 }
-                )) {
-                    Text("Whole subject").tag(UUID?.none)
-                    ForEach(store.subtopics(for: store.timerSubject)) { topic in
-                        Text(topic.name).tag(UUID?.some(topic.id))
-                    }
-                }
-                .labelsHidden()
-                .disabled(store.isTimerRunning)
+                BentoMenu(
+                    selection: Binding(
+                        get: { store.timerSubtopicID },
+                        set: { store.timerSubtopicID = $0 }
+                    ),
+                    options: [BentoOption("Whole subject", value: UUID?.none)]
+                        + store.subtopics(for: store.timerSubject).map { BentoOption($0.name, value: Optional($0.id)) },
+                    width: 170
+                )
             }
 
             if store.timerKind.supportsMarking {
@@ -265,7 +271,6 @@ private struct FocusTimerCard: View {
                     ))
                     .textFieldStyle(.roundedBorder)
                 }
-                .disabled(store.isTimerRunning)
             }
 
             HStack(spacing: 18) {
@@ -273,6 +278,18 @@ private struct FocusTimerCard: View {
                 timerLegend(symbol: "sparkles", text: "\(GameRules.xpPerMinute) XP / min")
                 timerLegend(symbol: "flag.checkered", text: "1 min toward match")
                 Spacer()
+            }
+
+            if let pending = store.pendingTimerMinutes {
+                HStack(spacing: 8) {
+                    Image(systemName: "tray.and.arrow.down.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.studyGold)
+                    Text("\(pending) minute\(pending == 1 ? "" : "s") waiting to be logged. Set the type, subject, topic and marks, then confirm.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
             }
 
             if store.lastTimerSessionMinutes > 0 && !store.isTimerRunning {
@@ -283,6 +300,13 @@ private struct FocusTimerCard: View {
             }
         }
         .surface(padding: 22)
+        .onChange(of: store.pendingTimerMinutes) { _, newValue in
+            if newValue != nil { showingReview = true }
+        }
+        .sheet(isPresented: $showingReview) {
+            TimerReviewSheet()
+                .environment(store)
+        }
     }
 
     private func timerLegend(symbol: String, text: String) -> some View {
@@ -293,6 +317,215 @@ private struct FocusTimerCard: View {
                 .font(.system(size: 9, weight: .medium))
         }
         .foregroundStyle(.secondary)
+    }
+}
+
+/// Shown when a timer session is finished. Everything about the entry can still change —
+/// what kind of work it was, which subject and topic it belongs to, and the marks earned —
+/// so a session is filed correctly in one go instead of needing a second entry.
+private struct TimerReviewSheet: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var marksObtained = ""
+    @State private var marksTotal = ""
+
+    private var minutes: Int { store.pendingTimerMinutes ?? 0 }
+
+    private var marks: (obtained: Int, total: Int)? {
+        guard store.timerKind.supportsMarking,
+              let obtained = Int(marksObtained),
+              let total = Int(marksTotal),
+              total > 0,
+              obtained >= 0 else { return nil }
+        return (min(obtained, total), total)
+    }
+
+    private var reward: StudyReward {
+        StudyReward.calculate(
+            kind: store.timerKind,
+            subject: store.timerSubject,
+            minutes: minutes,
+            marksObtained: marks?.obtained,
+            marksTotal: marks?.total
+        )
+    }
+
+    private var subjectTopics: [Subtopic] {
+        store.subtopics(for: store.timerSubject)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                SectionHeader(
+                    title: "Finish Session",
+                    subtitle: "Check the details, add marks, then log it",
+                    symbol: "timer"
+                )
+                Spacer()
+                Button {
+                    store.discardTimerSession()
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Discard this session")
+            }
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(minutes)")
+                        .font(.system(size: 40, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.studyGreen)
+                    Text(minutes == 1 ? "MINUTE" : "MINUTES")
+                        .font(.system(size: 8, weight: .black, design: .rounded))
+                        .tracking(1.2)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Pill(text: "+\(reward.cash.formatted()) cash", color: .studyGold, icon: "banknote")
+                    Pill(text: "+\(reward.xp) XP", color: .studyTeal, icon: "sparkles")
+                    if let percentage = reward.percentage {
+                        Pill(text: "\(percentage)% marked", color: .studyGreen, icon: "checkmark.seal")
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            VStack(spacing: 10) {
+                reviewRow("Activity") {
+                    BentoMenu(
+                        selection: Binding(
+                            get: { store.timerKind },
+                            set: { store.timerKind = $0 }
+                        ),
+                        options: StudyActivityKind.allCases.map {
+                            BentoOption($0.title, value: $0, symbol: $0.systemImage)
+                        },
+                        width: 200
+                    )
+                }
+                reviewRow("Subject") {
+                    BentoMenu(
+                        selection: Binding(
+                            get: { store.timerSubject },
+                            set: { store.timerSubject = $0; store.timerSubtopicID = nil }
+                        ),
+                        options: StudySubject.allCases.map { BentoOption($0.shortName, value: $0) },
+                        width: 200
+                    )
+                }
+                reviewRow("Topic") {
+                    BentoMenu(
+                        selection: Binding(
+                            get: { store.timerSubtopicID },
+                            set: { store.timerSubtopicID = $0 }
+                        ),
+                        options: [BentoOption("Whole subject", value: UUID?.none)]
+                            + subjectTopics.map { BentoOption($0.name, value: Optional($0.id)) },
+                        width: 200
+                    )
+                }
+                reviewRow("Task") {
+                    BentoMenu(
+                        selection: Binding(
+                            get: { store.timerTodoID },
+                            set: { store.setTimerTodo($0) }
+                        ),
+                        options: [BentoOption("No linked task", value: UUID?.none)]
+                            + store.state.todos.filter { !$0.isCompleted }
+                                .map { BentoOption($0.title, value: Optional($0.id)) },
+                        width: 200
+                    )
+                }
+            }
+
+            if store.timerKind.supportsMarking {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("MARKS")
+                        .font(.system(size: 8, weight: .black, design: .rounded))
+                        .tracking(1)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        TextField("Gained", text: $marksObtained)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                        Text("out of")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        TextField("Total", text: $marksTotal)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                        Spacer()
+                        Text("Leave blank if this work was unmarked")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Text("Nothing has been paid or logged yet — this minute counts the moment you confirm.")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Button("Discard") {
+                    store.discardTimerSession()
+                    dismiss()
+                }
+                .buttonStyle(.bentoBordered)
+                .bentoTint(.white)
+
+                Spacer()
+
+                Button {
+                    store.timerMarksObtained = marks?.obtained
+                    store.timerMarksTotal = marks?.total
+                    store.confirmTimerSession()
+                    dismiss()
+                } label: {
+                    Label("Log Session", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.bentoProminent)
+                .bentoTint(.primary)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(22)
+        .frame(width: 520)
+        .background(AppBackground())
+        .onAppear {
+            marksObtained = store.timerMarksObtained.map(String.init) ?? ""
+            marksTotal = store.timerMarksTotal.map(String.init) ?? ""
+        }
+        .onChange(of: store.timerKind) { _, newKind in
+            if !newKind.supportsMarking {
+                marksObtained = ""
+                marksTotal = ""
+            }
+        }
+    }
+
+    private func reviewRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 10) {
+            Text(label.uppercased())
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .tracking(1)
+                .foregroundStyle(.secondary)
+                .frame(width: 62, alignment: .leading)
+            content()
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -372,23 +605,19 @@ private struct QuickLogCard: View {
             .labelsHidden()
 
             HStack(spacing: 10) {
-                Picker("Subject", selection: $subject) {
-                    ForEach(StudySubject.allCases) { subj in
-                        Text(subj.shortName).tag(subj)
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 160)
+                BentoMenu(
+                    selection: $subject,
+                    options: StudySubject.allCases.map { BentoOption($0.shortName, value: $0) },
+                    width: 150
+                )
 
-                Picker("Topic", selection: $subtopicID) {
-                    Text(subtopics.isEmpty ? "No topics yet" : "Whole subject").tag(UUID?.none)
-                    ForEach(subtopics) { topic in
-                        Text(topic.name).tag(UUID?.some(topic.id))
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 200)
-                .disabled(subtopics.isEmpty)
+                BentoMenu(
+                    selection: $subtopicID,
+                    options: [BentoOption(subtopics.isEmpty ? "No topics yet" : "Whole subject", value: UUID?.none)]
+                        + subtopics.map { BentoOption($0.name, value: Optional($0.id)) },
+                    width: 190,
+                    isEnabled: !subtopics.isEmpty
+                )
 
                 TextField("What did you work on?", text: $title)
                     .textFieldStyle(.roundedBorder)

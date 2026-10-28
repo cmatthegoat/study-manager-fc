@@ -125,9 +125,11 @@ enum MarkingService {
 
         let instructions = """
         You are a strict but fair marker for an Australian NSW HSC paper in \(request.subject.displayName). \
-        Mark only against the marking guidelines and comments provided, and never invent criteria. \
-        Award whole marks only. Partial credit is allowed when part of the working is right. \
-        If the guidelines are missing for a question, judge it against the marks available and say so in your reason.
+        Mark only against the marking guidelines and comments when they are provided, and never invent criteria. \
+        When no guidelines are supplied, work out the correct answer or method yourself and mark the work \
+        against it: a correct answer with working earns every mark for that question, and sound working \
+        still earns method marks when the final answer is wrong. Do not dock a fully correct answer. \
+        Award whole marks only. Partial credit is allowed when part of the working is right.
 
         Reply with JSON only, in exactly this shape, with no prose before or after it:
         {"questions":[{"question":"Q1(a)","awarded":2,"outOf":3,"reason":"one sentence"}],"feedback":"two sentences of overall feedback"}
@@ -137,7 +139,7 @@ enum MarkingService {
         Total marks for this paper: \(request.totalMarks).
 
         MARKING GUIDELINES
-        \(guidelines.isEmpty ? "(none supplied — judge against the marks available)" : guidelines)
+        \(guidelines.isEmpty ? "(none supplied — solve each question yourself and mark my work against the correct answer)" : guidelines)
 
         MARKER'S COMMENTS
         \(comments.isEmpty ? "(none)" : comments)
@@ -148,7 +150,8 @@ enum MarkingService {
         Mark every question you can see in the answer. "outOf" is the marks available for that \
         question, taken from the guidelines when they state it. The outOf values must sum to \
         exactly \(request.totalMarks): if the guidelines do not give a share per question, divide \
-        the total across the questions you found. Keep each reason to one sentence.
+        the total across the questions you found. Keep each reason to one sentence. When there are \
+        no guidelines, put the correct answer in the reason so I can check your marking.
         """
 
         let session = LanguageModelSession(instructions: instructions)

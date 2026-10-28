@@ -177,31 +177,25 @@ struct StudyLogView: View {
                 .padding(.vertical, 7)
                 .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                Picker("Subject", selection: $subjectFilter) {
-                    Text("All subjects").tag(StudySubject?.none)
-                    ForEach(StudySubject.allCases) { subject in
-                        Text(subject.shortName).tag(StudySubject?.some(subject))
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 150)
+                BentoMenu(
+                    selection: $subjectFilter,
+                    options: [BentoOption("All subjects", value: StudySubject?.none)]
+                        + StudySubject.allCases.map { BentoOption($0.shortName, value: Optional($0)) },
+                    width: 150
+                )
 
-                Picker("Kind", selection: $kindFilter) {
-                    Text("All activity").tag(StudyActivityKind?.none)
-                    ForEach(StudyActivityKind.allCases) { kind in
-                        Text(kind.title).tag(StudyActivityKind?.some(kind))
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 150)
+                BentoMenu(
+                    selection: $kindFilter,
+                    options: [BentoOption("All activity", value: StudyActivityKind?.none)]
+                        + StudyActivityKind.allCases.map { BentoOption($0.title, value: Optional($0)) },
+                    width: 150
+                )
 
-                Picker("Period", selection: $period) {
-                    ForEach(LogPeriod.allCases) { period in
-                        Text(period.title).tag(period)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 130)
+                BentoMenu(
+                    selection: $period,
+                    options: LogPeriod.allCases.map { BentoOption($0.title, value: $0) },
+                    width: 130
+                )
 
                 if hasFilters {
                     Button("Clear") { clearFilters() }

@@ -24,8 +24,14 @@ struct MarkingView: View {
     @State private var importMessage: String?
     @State private var result: MarkingResult?
     @State private var savedMessage: String?
+    /// True when the last pass ran with no rubric, so the result can say the marking was its own.
+    @State private var markedWithoutGuidelines = false
 
     private var availability: MarkingAvailability { MarkingService.availability }
+
+    private var guidelinesAreEmpty: Bool {
+        guidelines.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     private var canMark: Bool {
         availability.isAvailable
@@ -40,7 +46,7 @@ struct MarkingView: View {
                 ScreenHeader(
                     eyebrow: "AI Marking",
                     title: "Mark a Past Paper",
-                    subtitle: "Add the marking guidelines and your work — typed, or as PNG, JPEG or PDF files — and the on-device model marks it against the rubric."
+                    subtitle: "Add your work — typed, or as PNG, JPEG or PDF files. Guidelines are optional: attach a rubric for strict marking, or leave it out and the model solves each question itself."
                 )
 
                 availabilityCard
@@ -124,9 +130,20 @@ struct MarkingView: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(
                 title: "Marking Guidelines",
-                subtitle: "The rubric, pasted or from files",
+                subtitle: guidelinesAreEmpty
+                    ? "Optional — no rubric needed for obvious work"
+                    : "The rubric, pasted or from files",
                 symbol: "list.bullet.clipboard"
             )
+            if guidelinesAreEmpty {
+                Label(
+                    "Leave this empty for maths or chemistry where the answer is clear: the model works each question out and marks your working against the correct answer.",
+                    systemImage: "info.circle"
+                )
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
             TextEditor(text: $guidelines)
                 .font(.system(size: 11))
                 .scrollContentBackground(.hidden)
@@ -244,13 +261,11 @@ struct MarkingView: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Paper Details", subtitle: "Used for the total and the saved assessment", symbol: "doc.text.magnifyingglass")
             HStack(spacing: 10) {
-                Picker("Subject", selection: $subject) {
-                    ForEach(StudySubject.allCases) { subject in
-                        Text(subject.shortName).tag(subject)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 160)
+                BentoMenu(
+                    selection: $subject,
+                    options: StudySubject.allCases.map { BentoOption($0.shortName, value: $0) },
+                    width: 160
+                )
                 TextField("Title, e.g. 2024 Trial Paper", text: $title)
                 TextField("Total marks", text: $totalMarks)
                     .frame(width: 100)
@@ -331,6 +346,16 @@ struct MarkingView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if markedWithoutGuidelines {
+                Label(
+                    "Marked without a rubric: the model solved the questions itself, so treat these marks as a rougher guide than a marked scheme would give.",
+                    systemImage: "info.circle"
+                )
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
             HStack {
                 if let savedMessage {
                     Text(savedMessage)
@@ -364,6 +389,7 @@ struct MarkingView: View {
             guidelinesText: guidelines,
             comments: comments
         )
+        markedWithoutGuidelines = guidelinesAreEmpty
         isMarking = true
         Task {
             do {

@@ -21,7 +21,9 @@ struct SubjectsView: View {
                 )
                 
                 overview
-                
+
+                subjectAveragesCard
+
                 LazyVGrid(
                     columns: [GridItem(.flexible(), spacing: 18), GridItem(.flexible(), spacing: 18)],
                     spacing: 18
@@ -37,6 +39,47 @@ struct SubjectsView: View {
         }
     }
     
+    /// Every subject side by side, pooled from all marked work. The per-subject cards below
+    /// break their own bar down by topic.
+    private var subjectAveragesCard: some View {
+        let rows = MarksAverages.bySubject(store.state.recentSessions)
+        let aggregate = overall
+        return VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(
+                title: "Average by Subject",
+                subtitle: "Pooled percentage across every marked piece, all work kinds together",
+                symbol: "chart.bar.xaxis"
+            )
+            if rows.isEmpty {
+                Text("Log homework, a past paper or exam questions with marks and each subject will appear here.")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            } else {
+                MarksAverageChart(rows: rows, perRowHeight: 32)
+                HStack(spacing: 18) {
+                    markStat("Pieces", "\(aggregate.sessions)")
+                    markStat("Overall average", aggregate.averagePercentage.map { "\($0)%" } ?? "–")
+                    markStat("Marks", "\(aggregate.marksObtained)/\(aggregate.marksTotal)")
+                    Spacer()
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(padding: 18)
+    }
+
+    private func markStat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label.uppercased())
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .tracking(0.8)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .monospacedDigit()
+        }
+    }
+
     private var overview: some View {
         VStack(spacing: 16) {
             HStack(spacing: 16) {
@@ -110,11 +153,21 @@ struct SubjectCard: View {
     private var averageTint: Color {
         gradeColor(for: aggregate.averagePercentage)
     }
+
+    /// This subject's marked work, split by its own topics.
+    private var topicAverages: [MarksAverageRow] {
+        MarksAverages.byTopic(store.state.recentSessions.filter { $0.subject == subject })
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
             stats
+            if !topicAverages.isEmpty {
+                Divider()
+                sectionLabel("MARKS BY TOPIC", count: topicAverages.count)
+                MarksAverageChart(rows: topicAverages, perRowHeight: 26, showsPieceCount: false)
+            }
             Divider()
             sectionLabel("TOPICS", count: topics.count)
             topicList
@@ -264,15 +317,12 @@ struct SubjectCard: View {
                     .font(.system(size: 7.5, weight: .black, design: .rounded))
                     .tracking(0.8)
                     .foregroundStyle(.secondary)
-                Picker("", selection: $selectedSubtopicID) {
-                    Text("None").tag(UUID?.none)
-                    ForEach(topics) { topic in
-                        Text(topic.name).tag(Optional(topic.id))
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: 220, alignment: .leading)
+                BentoMenu(
+                    selection: $selectedSubtopicID,
+                    options: [BentoOption("None", value: UUID?.none)]
+                        + topics.map { BentoOption($0.name, value: Optional($0.id)) },
+                    width: 220
+                )
                 Spacer()
             }
         }
@@ -371,27 +421,33 @@ struct TodoDetailSheet: View {
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
             Form {
                 TextField("Task title", text: $title)
-                Picker("Subject", selection: $subject) {
-                    ForEach(StudySubject.allCases) { s in
-                        Text(s.shortName).tag(s)
+                LabeledContent("Subject") {
+                    BentoMenu(
+                        selection: $subject,
+                        options: StudySubject.allCases.map { BentoOption($0.shortName, value: $0) },
+                        width: 180
+                    )
+                    .onChange(of: subject) { _, _ in
+                        if !subjectTopics.contains(where: { $0.id == subtopicID }) {
+                            subtopicID = nil
+                        }
                     }
                 }
-                .onChange(of: subject) { _, _ in
-                    if !subjectTopics.contains(where: { $0.id == subtopicID }) {
-                        subtopicID = nil
-                    }
+                LabeledContent("Topic") {
+                    BentoMenu(
+                        selection: $subtopicID,
+                        options: [BentoOption("No topic", value: UUID?.none)]
+                            + subjectTopics.map { BentoOption($0.name, value: Optional($0.id)) },
+                        width: 180
+                    )
                 }
-                Picker("Topic", selection: $subtopicID) {
-                    Text("No topic").tag(UUID?.none)
-                    ForEach(subjectTopics) { topic in
-                        Text(topic.name).tag(Optional(topic.id))
-                    }
-                }
-                Picker("Priority", selection: $priority) {
-                    Text("None").tag(Optional<Int>(nil))
-                    ForEach([1, 2, 3, 4], id: \.self) { p in
-                        Text("P\(p)").tag(p)
-                    }
+                LabeledContent("Priority") {
+                    BentoMenu(
+                        selection: $priority,
+                        options: [BentoOption("None", value: Int?.none)]
+                            + [1, 2, 3, 4].map { BentoOption("P\($0)", value: Optional($0)) },
+                        width: 180
+                    )
                 }
             }
             HStack {

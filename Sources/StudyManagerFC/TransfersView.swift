@@ -240,40 +240,32 @@ struct TransfersView: View {
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .frame(maxWidth: 320)
 
-            Picker("Club", selection: $clubFilter) {
-                Text("All clubs").tag(String?.none)
-                ForEach(clubs) { club in
-                    Text(club.shortName).tag(String?.some(club.id))
-                }
-            }
-            .labelsHidden()
-            .frame(width: 150)
+            BentoMenu(
+                selection: $clubFilter,
+                options: [BentoOption("All clubs", value: String?.none)]
+                    + clubs.map { BentoOption($0.shortName, value: Optional($0.id)) },
+                width: 150
+            )
 
-            Picker("Position", selection: $positionFilter) {
-                Text("All positions").tag(PositionGroup?.none)
-                ForEach(PositionGroup.allCases) { group in
-                    Text(group.displayName).tag(PositionGroup?.some(group))
-                }
-            }
-            .labelsHidden()
-            .frame(width: 150)
+            BentoMenu(
+                selection: $positionFilter,
+                options: [BentoOption("All positions", value: PositionGroup?.none)]
+                    + PositionGroup.allCases.map { BentoOption($0.displayName, value: Optional($0)) },
+                width: 150
+            )
 
-            Picker("Price", selection: $priceFilter) {
-                Text("Any price").tag(PriceBand?.none)
-                ForEach(PriceBand.allCases) { band in
-                    Text(band.label).tag(PriceBand?.some(band))
-                }
-            }
-            .labelsHidden()
-            .frame(width: 150)
+            BentoMenu(
+                selection: $priceFilter,
+                options: [BentoOption("Any price", value: PriceBand?.none)]
+                    + PriceBand.allCases.map { BentoOption($0.label, value: Optional($0)) },
+                width: 150
+            )
 
-            Picker("Sort", selection: $sortMode) {
-                ForEach(SortMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .labelsHidden()
-            .frame(width: 170)
+            BentoMenu(
+                selection: $sortMode,
+                options: SortMode.allCases.map { BentoOption($0.label, value: $0) },
+                width: 170
+            )
 
             Spacer()
             Text("\(store.transferMarket.count) players available")
@@ -426,7 +418,7 @@ struct NegotiationSheet: View {
             HStack(spacing: 18) {
                 stat("Market value", listing.fee.formatted())
                 stat("Your cash", store.state.clubCash.formatted())
-                stat("Club rating", "\(FcDatabase.shared.club(listing.clubID)?.rating ?? 0)")
+                stat("Club rating", "\(ClubDatabase.club(for: listing.clubID)?.rating ?? 0)")
             }
 
             patienceBar

@@ -8,6 +8,10 @@ enum GameRules {
     /// Club Cash paid for ticking off a todo, before the subject's cash multiplier.
     static let clubCashPerTodo = 100
     static let benchLimit = 7
+    /// Chance each starting XI player picks up an injury in a match.
+    static let injuryChance = 0.05
+    /// Matches a newly injured player misses.
+    static let injuryMatches = 2
     static let xpPerLevel = 750
     /// Club Cash paid to each player for every level gained.
     static let clubCashPerLevelUp = 500
@@ -25,6 +29,21 @@ enum GameRules {
     static let transferOfferBadCeilingRange = 0.85...0.98
     static let freeAgentPoolTarget = 84
     static let retirementAge = 40
+    /// The last age at which a player still improves. Every squad member develops on the
+    /// same curve, whether or not they make the eleven.
+    static let growthUntilAge = 29
+    /// The age by which a developing player must have reached their potential. A player's
+    /// seasonal gain is sized against the seasons left to this age, so the ceiling is always
+    /// reached, never just approached.
+    static let potentialDeadlineAge = 30
+    /// An outstanding individual season is worth a permanent point at the next roll-over.
+    /// Past this age a player stops gaining from it and simply holds his rating instead.
+    static let performanceBonusMaxAge = 34
+    /// How far above his positional expectation a player must land for the season to count,
+    /// measured in standard deviations plus one flat point, so a lucky cameo cannot earn it.
+    static let performanceBonusDeviation = 1.5
+    /// A goalkeeper earns it by keeping this share of his club's clean sheets.
+    static let performanceBonusCleanSheetShare = 0.35
     static let academyIntakePerSeason = 3
     /// Competitive matches between each batch of academy prospects.
     static let matchesPerAcademyIntake = 5
@@ -208,9 +227,35 @@ enum PlayerPricing {
     static let baselineFee = 250
     static let growthPerOverall = 1.16
 
+    /// A player's price holds through his peak years and then falls with every year he ages,
+    /// so a club pays for the player rather than for a fading name.
+    static let declineStartAge = 29
+    static let declinePerYear = 0.93
+    static let declineFloor = 0.4
+
     static func fee(forOverall overall: Int) -> Int {
-        let steps = Double(max(0, overall - baselineOverall))
+        fee(forRating: Double(overall))
+    }
+
+    static func fee(forRating rating: Double) -> Int {
+        let steps = max(0, rating - Double(baselineOverall))
         return Int((Double(baselineFee) * pow(growthPerOverall, steps)).rounded())
+    }
+
+    /// What a player is worth on the market. Anyone with room to grow is valued at the
+    /// midpoint of his rating and his ceiling, so an 80 with 90 potential is priced as an 85
+    /// would be, whatever his age. Once he has nothing left to grow into the price is set by
+    /// his rating alone, and from `declineStartAge` every year takes 7% off it.
+    static func valuation(overall: Int, potential: Int, age: Int) -> Int {
+        let rating = potential > overall ? Double(overall + potential) / 2 : Double(overall)
+        let base = fee(forRating: rating)
+        return Int((Double(base) * ageMultiplier(for: age)).rounded())
+    }
+
+    /// 1.0 through a player's peak years, then a compounding discount for every year past it.
+    static func ageMultiplier(for age: Int) -> Double {
+        guard age > declineStartAge else { return 1 }
+        return max(declineFloor, pow(declinePerYear, Double(age - declineStartAge)))
     }
 }
 
@@ -272,7 +317,7 @@ struct Player: Identifiable, Codable, Hashable {
     }
 
     var marketValue: Int {
-        PlayerPricing.fee(forOverall: overall)
+        PlayerPricing.valuation(overall: overall, potential: potential, age: age)
     }
 
     var releaseValue: Int {
@@ -403,13 +448,17 @@ enum ClubDatabase {
         Club(id: "shakhtar-donetsk", name: "Shakhtar Donetsk", shortName: "Shakhtar", code: "SHK", countryCode: "UKR", primaryHex: "F26522", secondaryHex: "111111", rating: rating(for: "shakhtar-donetsk"))
     ]
 
-    /// Ratings come from the imported game database when it is available, so the
-    /// competition is seeded on the same numbers the squads are built from.
+    /// A club's rating is the average of the eleven it can field, with every out-of-position
+    /// pick docked — the same rule as the user's own XI. The database's club-level rating is
+    /// not used: it is a separate EA field on a different scale, so it read as 94 for a Real
+    /// Madrid side whose best eleven averages 87.
     static func rating(for id: String) -> Int {
-        if let club = FcDatabase.shared.club(id), club.rating > 0 {
-            return club.rating
+        if let xiRating = PlayerFactory.bestXIRating(for: id) {
+            return xiRating
         }
-        return ClubSquads.roundedRating(for: id)
+        let seeded = ClubSquads.roundedRating(for: id)
+        if seeded > 0 { return seeded }
+        return FcDatabase.shared.club(id)?.rating ?? 75
     }
 
     static func club(for id: String?) -> Club? {
@@ -442,50 +491,144 @@ struct LineupSlot: Identifiable, Hashable {
     let x: Double
     let y: Double
 
-    static let all: [LineupSlot] = [
-        LineupSlot(id: "gk", label: "GK", position: .goalkeeper, x: 0.50, y: 0.91),
-        LineupSlot(id: "lb", label: "LB", position: .leftBack, x: 0.13, y: 0.73),
-        LineupSlot(id: "cb1", label: "CB", position: .centerBack, x: 0.37, y: 0.78),
-        LineupSlot(id: "cb2", label: "CB", position: .centerBack, x: 0.63, y: 0.78),
-        LineupSlot(id: "rb", label: "RB", position: .rightBack, x: 0.87, y: 0.73),
-        LineupSlot(id: "cdm", label: "CDM", position: .defensiveMid, x: 0.50, y: 0.59),
-        LineupSlot(id: "cm", label: "CM", position: .centralMid, x: 0.24, y: 0.49),
-        LineupSlot(id: "cam", label: "CAM", position: .attackingMid, x: 0.76, y: 0.49),
-        LineupSlot(id: "lw", label: "LW", position: .leftWing, x: 0.16, y: 0.26),
-        LineupSlot(id: "st", label: "ST", position: .striker, x: 0.50, y: 0.18),
-        LineupSlot(id: "rw", label: "RW", position: .rightWing, x: 0.84, y: 0.26)
-    ]
+    /// The default 4-3-3, kept as the fallback shape for careers saved before formations existed.
+    static let all: [LineupSlot] = Formation.f433.slots
 
     static func slot(for id: String) -> LineupSlot? {
         all.first(where: { $0.id == id })
     }
 }
 
+/// Shapes the XI can be arranged in. Every one has a goalkeeper plus ten outfield players, so
+/// nothing about match strength normalisation has to change per formation.
+/// Slot ids are shared between shapes wherever the role is the same (`gk`, `lb`, `cb1`…), which
+/// lets a player keep his place when the shape changes around him.
+enum Formation: String, Codable, CaseIterable, Identifiable, Hashable {
+    case f433
+    case f442
+    case f41212
+    case f4213
+    case f4123
+
+    var id: String { rawValue }
+
+    /// The name a manager would use, e.g. 4-3-3.
+    var displayName: String {
+        switch self {
+        case .f433: "4-3-3"
+        case .f442: "4-4-2"
+        case .f41212: "4-1-2-1-2"
+        case .f4213: "4-2-1-3"
+        case .f4123: "4-1-2-3"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .f433: "One holding mid, one creator, two wide forwards"
+        case .f442: "Two banks of four, two strikers up top"
+        case .f41212: "Narrow diamond behind a front two"
+        case .f4213: "Double pivot with a creator and a front three"
+        case .f4123: "Single pivot, two creators, a front three"
+        }
+    }
+
+    var slots: [LineupSlot] {
+        switch self {
+        case .f433:
+            [
+                LineupSlot(id: "gk", label: "GK", position: .goalkeeper, x: 0.50, y: 0.91),
+                LineupSlot(id: "lb", label: "LB", position: .leftBack, x: 0.13, y: 0.73),
+                LineupSlot(id: "cb1", label: "CB", position: .centerBack, x: 0.37, y: 0.78),
+                LineupSlot(id: "cb2", label: "CB", position: .centerBack, x: 0.63, y: 0.78),
+                LineupSlot(id: "rb", label: "RB", position: .rightBack, x: 0.87, y: 0.73),
+                LineupSlot(id: "cdm", label: "CDM", position: .defensiveMid, x: 0.50, y: 0.59),
+                LineupSlot(id: "cm", label: "CM", position: .centralMid, x: 0.24, y: 0.49),
+                LineupSlot(id: "cam", label: "CAM", position: .attackingMid, x: 0.76, y: 0.49),
+                LineupSlot(id: "lw", label: "LW", position: .leftWing, x: 0.16, y: 0.26),
+                LineupSlot(id: "st", label: "ST", position: .striker, x: 0.50, y: 0.18),
+                LineupSlot(id: "rw", label: "RW", position: .rightWing, x: 0.84, y: 0.26)
+            ]
+        case .f442:
+            [
+                LineupSlot(id: "gk", label: "GK", position: .goalkeeper, x: 0.50, y: 0.93),
+                LineupSlot(id: "lb", label: "LB", position: .leftBack, x: 0.13, y: 0.76),
+                LineupSlot(id: "cb1", label: "CB", position: .centerBack, x: 0.38, y: 0.80),
+                LineupSlot(id: "cb2", label: "CB", position: .centerBack, x: 0.62, y: 0.80),
+                LineupSlot(id: "rb", label: "RB", position: .rightBack, x: 0.87, y: 0.76),
+                LineupSlot(id: "lm", label: "LM", position: .leftWing, x: 0.13, y: 0.54),
+                LineupSlot(id: "cm1", label: "CM", position: .centralMid, x: 0.38, y: 0.56),
+                LineupSlot(id: "cm2", label: "CM", position: .centralMid, x: 0.62, y: 0.56),
+                LineupSlot(id: "rm", label: "RM", position: .rightWing, x: 0.87, y: 0.54),
+                LineupSlot(id: "st1", label: "ST", position: .striker, x: 0.38, y: 0.20),
+                LineupSlot(id: "st2", label: "ST", position: .striker, x: 0.62, y: 0.20)
+            ]
+        case .f41212:
+            [
+                LineupSlot(id: "gk", label: "GK", position: .goalkeeper, x: 0.50, y: 0.93),
+                LineupSlot(id: "lb", label: "LB", position: .leftBack, x: 0.13, y: 0.76),
+                LineupSlot(id: "cb1", label: "CB", position: .centerBack, x: 0.38, y: 0.80),
+                LineupSlot(id: "cb2", label: "CB", position: .centerBack, x: 0.62, y: 0.80),
+                LineupSlot(id: "rb", label: "RB", position: .rightBack, x: 0.87, y: 0.76),
+                LineupSlot(id: "cdm", label: "CDM", position: .defensiveMid, x: 0.50, y: 0.64),
+                LineupSlot(id: "cm1", label: "CM", position: .centralMid, x: 0.22, y: 0.50),
+                LineupSlot(id: "cm2", label: "CM", position: .centralMid, x: 0.78, y: 0.50),
+                LineupSlot(id: "cam", label: "CAM", position: .attackingMid, x: 0.50, y: 0.34),
+                LineupSlot(id: "st1", label: "ST", position: .striker, x: 0.38, y: 0.16),
+                LineupSlot(id: "st2", label: "ST", position: .striker, x: 0.62, y: 0.16)
+            ]
+        case .f4213:
+            [
+                LineupSlot(id: "gk", label: "GK", position: .goalkeeper, x: 0.50, y: 0.93),
+                LineupSlot(id: "lb", label: "LB", position: .leftBack, x: 0.13, y: 0.76),
+                LineupSlot(id: "cb1", label: "CB", position: .centerBack, x: 0.38, y: 0.80),
+                LineupSlot(id: "cb2", label: "CB", position: .centerBack, x: 0.62, y: 0.80),
+                LineupSlot(id: "rb", label: "RB", position: .rightBack, x: 0.87, y: 0.76),
+                LineupSlot(id: "cdm1", label: "CDM", position: .defensiveMid, x: 0.36, y: 0.62),
+                LineupSlot(id: "cdm2", label: "CDM", position: .defensiveMid, x: 0.64, y: 0.62),
+                LineupSlot(id: "cam", label: "CAM", position: .attackingMid, x: 0.50, y: 0.42),
+                LineupSlot(id: "lw", label: "LW", position: .leftWing, x: 0.16, y: 0.20),
+                LineupSlot(id: "st", label: "ST", position: .striker, x: 0.50, y: 0.14),
+                LineupSlot(id: "rw", label: "RW", position: .rightWing, x: 0.84, y: 0.20)
+            ]
+        case .f4123:
+            [
+                LineupSlot(id: "gk", label: "GK", position: .goalkeeper, x: 0.50, y: 0.93),
+                LineupSlot(id: "lb", label: "LB", position: .leftBack, x: 0.13, y: 0.76),
+                LineupSlot(id: "cb1", label: "CB", position: .centerBack, x: 0.38, y: 0.80),
+                LineupSlot(id: "cb2", label: "CB", position: .centerBack, x: 0.62, y: 0.80),
+                LineupSlot(id: "rb", label: "RB", position: .rightBack, x: 0.87, y: 0.76),
+                LineupSlot(id: "cdm", label: "CDM", position: .defensiveMid, x: 0.50, y: 0.63),
+                LineupSlot(id: "cm1", label: "CM", position: .centralMid, x: 0.30, y: 0.47),
+                LineupSlot(id: "cm2", label: "CM", position: .centralMid, x: 0.70, y: 0.47),
+                LineupSlot(id: "lw", label: "LW", position: .leftWing, x: 0.16, y: 0.20),
+                LineupSlot(id: "st", label: "ST", position: .striker, x: 0.50, y: 0.14),
+                LineupSlot(id: "rw", label: "RW", position: .rightWing, x: 0.84, y: 0.20)
+            ]
+        }
+    }
+}
+
 struct SquadMetrics {
     var overall: Int
-    var chemistry: Int
     var attack: Int
     var midfield: Int
     var defence: Int
     var totalValue: Int
     var playerCount: Int
 
-    static let empty = SquadMetrics(overall: 0, chemistry: 0, attack: 0, midfield: 0, defence: 0, totalValue: 0, playerCount: 0)
+    static let empty = SquadMetrics(overall: 0, attack: 0, midfield: 0, defence: 0, totalValue: 0, playerCount: 0)
 
-    static func calculate(lineup: [String: UUID], players: [Player]) -> SquadMetrics {
+    static func calculate(lineup: [String: UUID], players: [Player], slots: [LineupSlot] = LineupSlot.all) -> SquadMetrics {
         let playerMap = Dictionary(uniqueKeysWithValues: players.map { ($0.id, $0) })
         var ratings: [Int] = []
-        var chemistryPoints = 0
-        var nations: [String: Int] = [:]
         var attack: [Int] = []
         var midfield: [Int] = []
         var defence: [Int] = []
 
-        for slot in LineupSlot.all {
+        for slot in slots {
             guard let playerID = lineup[slot.id], let player = playerMap[playerID] else { continue }
             ratings.append(player.adjustedRating(for: slot))
-            chemistryPoints += player.fitScore(for: slot)
-            nations[player.nationCode, default: 0] += 1
             switch slot.position.group {
             case .goalkeeper, .defence:
                 defence.append(player.adjustedRating(for: slot))
@@ -498,16 +641,10 @@ struct SquadMetrics {
 
         guard !ratings.isEmpty else { return .empty }
 
-        let sameNationLinks = nations.values.reduce(0) { partial, count in
-            partial + max(0, count - 1)
-        }
-        let positionChemistry = Double(chemistryPoints) / Double(LineupSlot.all.count * 2) * 70.0
-        let nationChemistry = min(30.0, Double(sameNationLinks) * 3.5)
-        let chemistry = Int((positionChemistry + nationChemistry).rounded())
         let baseOverall = Double(ratings.reduce(0, +)) / Double(ratings.count)
-        let missingPenalty = Double(LineupSlot.all.count - ratings.count) * 2.5
-        // Overall is the raw quality of the XI only; chemistry never inflates the rating
-        // used to simulate a match.
+        let missingPenalty = Double(slots.count - ratings.count) * 2.5
+        // Overall is the raw quality of the XI only: who is on the pitch, in the slots they
+        // are suited to, and nothing about who they share a nationality with.
         let overall = Int((baseOverall - missingPenalty).rounded())
 
         func lineRating(_ values: [Int], fallback: Int) -> Int {
@@ -517,7 +654,6 @@ struct SquadMetrics {
 
         return SquadMetrics(
             overall: max(0, overall),
-            chemistry: chemistry,
             attack: lineRating(attack, fallback: overall - 3),
             midfield: lineRating(midfield, fallback: overall - 3),
             defence: lineRating(defence, fallback: overall - 3),
@@ -978,11 +1114,28 @@ struct StudyReward {
 
     var percentage: Int? { ratio.map { Int(($0 * 100).rounded()) } }
 
+    /// A percentage is only as strong a signal as the paper it came from: one mark out of
+    /// one is a perfect score of almost no work, and it used to pay the same 1.45x as a
+    /// twenty-mark paper. So the quality swing is scaled by how many marks were actually
+    /// on offer — a full paper gets all of it, and a single-mark question keeps a slice.
+    static let fullCreditMarks = 20.0
+    /// Even a one-mark piece keeps this much of the swing, so small marked work still
+    /// beats unmarked work instead of being treated as no evidence at all.
+    static let minimumCreditWeight = 0.3
+
+    /// How much of the quality swing a paper of this size earns, 0.3...1.
+    static func creditWeight(marksTotal: Int?) -> Double {
+        guard let marksTotal, marksTotal > 0 else { return 1 }
+        let volume = min(1, Double(marksTotal) / fullCreditMarks)
+        return minimumCreditWeight + (1 - minimumCreditWeight) * volume
+    }
+
     /// Unmarked work earns the plain rate. Marked work scales from 0.8x at 0% up to
-    /// 1.45x at 100%, so a strong paper is worth noticeably more than a weak one.
-    static func gradeFactor(for ratio: Double?) -> Double {
+    /// 1.45x at 100%, narrowed toward 1x for papers with only a few marks on them.
+    static func gradeFactor(for ratio: Double?, marksTotal: Int? = nil) -> Double {
         guard let ratio else { return 1.0 }
-        return 0.8 + min(1, max(0, ratio)) * 0.65
+        let swing = (0.8 + min(1, max(0, ratio)) * 0.65) - 1.0
+        return 1.0 + swing * creditWeight(marksTotal: marksTotal)
     }
 
     static func calculate(
@@ -996,7 +1149,7 @@ struct StudyReward {
         if let marksObtained, let marksTotal, marksTotal > 0, marksObtained >= 0 {
             ratio = min(1, Double(marksObtained) / Double(marksTotal))
         }
-        let grade = gradeFactor(for: ratio)
+        let grade = gradeFactor(for: ratio, marksTotal: marksTotal)
         let cash = Double(max(0, minutes)) * Double(GameRules.clubCashPerMinute) * subject.cashMultiplier * kind.rewardMultiplier * grade
         let xp = Double(max(0, minutes)) * Double(GameRules.xpPerMinute) * subject.xpMultiplier * kind.rewardMultiplier * grade
         return StudyReward(cash: Int(cash.rounded()), xp: Int(xp.rounded()), ratio: ratio)
@@ -1261,6 +1414,52 @@ struct SeasonTransition: Codable, Identifiable, Hashable {
     var retirees: [String]
     var youthAdded: Int
     var newSeason: Int
+    /// Players who earned a performance bonus at this roll-over. Missing from careers saved
+    /// before the bonus existed, which is why the decoder tolerates it being absent.
+    var improvements: [SeasonPerformanceReward] = []
+
+    init(
+        id: UUID,
+        completedSeason: Int,
+        championName: String,
+        userFinish: String,
+        retirees: [String],
+        youthAdded: Int,
+        newSeason: Int,
+        improvements: [SeasonPerformanceReward] = []
+    ) {
+        self.id = id
+        self.completedSeason = completedSeason
+        self.championName = championName
+        self.userFinish = userFinish
+        self.retirees = retirees
+        self.youthAdded = youthAdded
+        self.newSeason = newSeason
+        self.improvements = improvements
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case completedSeason
+        case championName
+        case userFinish
+        case retirees
+        case youthAdded
+        case newSeason
+        case improvements
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        completedSeason = try container.decode(Int.self, forKey: .completedSeason)
+        championName = try container.decode(String.self, forKey: .championName)
+        userFinish = try container.decode(String.self, forKey: .userFinish)
+        retirees = try container.decodeIfPresent([String].self, forKey: .retirees) ?? []
+        youthAdded = try container.decodeIfPresent(Int.self, forKey: .youthAdded) ?? 0
+        newSeason = try container.decode(Int.self, forKey: .newSeason)
+        improvements = try container.decodeIfPresent([SeasonPerformanceReward].self, forKey: .improvements) ?? []
+    }
 }
 
 struct PackDefinition: Identifiable, Hashable {
@@ -1379,6 +1578,18 @@ struct GameState: Codable {
     var matchesSinceAcademyIntake: Int = 0
     /// Tests and exams with their marks, weightings, class ranks and topic results.
     var assessments: [Assessment] = []
+    /// Optional so a career saved before formations existed still opens as a 4-3-3.
+    var formation: Formation? = nil
+
+    var activeFormation: Formation { formation ?? .f433 }
+
+    /// Goals and assists from the season being played, rebuilt from its match reports, so the
+    /// leaderboard can put the current campaign beside the career totals.
+    var seasonScoringLedger: [PlayerScoringRecord] {
+        var ledger: [PlayerScoringRecord] = []
+        ledger.record(reports: season?.reports ?? [])
+        return ledger
+    }
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -1404,6 +1615,7 @@ struct GameState: Codable {
         case academyLevel
         case matchesSinceAcademyIntake
         case assessments
+        case formation
     }
 
     static func fresh() -> GameState {
@@ -1483,6 +1695,8 @@ extension GameState {
         academyLevel = try container.decodeIfPresent(Int.self, forKey: .academyLevel) ?? 1
         matchesSinceAcademyIntake = try container.decodeIfPresent(Int.self, forKey: .matchesSinceAcademyIntake) ?? 0
         assessments = try container.decodeIfPresent([Assessment].self, forKey: .assessments) ?? []
+        // Careers saved before formations existed have no key here and open as a 4-3-3.
+        formation = try container.decodeIfPresent(Formation.self, forKey: .formation)
     }
 }
 
@@ -1582,5 +1796,104 @@ extension Array where Element == PlayerScoringRecord {
         } else {
             append(PlayerScoringRecord(name: name, clubID: clubID, goals: goals, assists: assists))
         }
+    }
+}
+
+/// One player rewarded for an outstanding season, kept on the season transition so the
+/// breakthrough survives in the save file.
+struct SeasonPerformanceReward: Codable, Hashable, Identifiable {
+    var id: UUID
+    var name: String
+    var gain: Int
+    /// What he did to earn it, such as "9 goal contributions" or "11 clean sheets".
+    var note: String
+}
+
+/// Where a starting player stands in the performance-bonus race, run mid-season so the
+/// leaderboard can show the same numbers the roll-over will judge him on.
+struct SeasonBonusStatus: Hashable {
+    /// Goals plus assists so far, or clean sheets for a goalkeeper.
+    var produced: Int
+    /// The number he has to reach for the season to count.
+    var required: Int
+    /// What is being counted, said in the player's own terms.
+    var unit: String
+
+    var qualified: Bool { produced >= required }
+    var shortfall: Int { max(0, required - produced) }
+}
+
+enum SeasonPerformance {
+    /// The players who beat their positional expectation in the season just finished. Each is
+    /// judged against the share of the club's goals and assists his position is expected to
+    /// produce, so a defender's four contributions can be as outstanding as a striker's
+    /// thirty. Goalkeepers are judged on clean sheets instead, since they never score.
+    static func rewards(
+        players: [Player],
+        lineup: [String: UUID],
+        reports: [MatchReport],
+        clubID: String
+    ) -> [SeasonPerformanceReward] {
+        let statuses = standing(players: players, lineup: lineup, reports: reports, clubID: clubID)
+        let byName = Dictionary(players.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        return statuses.compactMap { id, status -> SeasonPerformanceReward? in
+            guard status.qualified, let name = byName[id] else { return nil }
+            return SeasonPerformanceReward(id: id, name: name, gain: 1, note: "\(status.produced) \(status.unit)")
+        }
+        .sorted { $0.name < $1.name }
+    }
+
+    /// The threshold every starter must reach, computed from the season so far. The reward
+    /// itself is only handed out at the roll-over, but the arithmetic is identical, so what
+    /// this reports now is what he will be judged on.
+    static func standing(
+        players: [Player],
+        lineup: [String: UUID],
+        reports: [MatchReport],
+        clubID: String
+    ) -> [UUID: SeasonBonusStatus] {
+        let clubReports = reports.filter { $0.homeClubID == clubID || $0.awayClubID == clubID }
+        let starterIDs = Set(lineup.values)
+        let starters = players.filter { starterIDs.contains($0.id) }
+        guard !clubReports.isEmpty, !starters.isEmpty else { return [:] }
+
+        var contributions: [String: Int] = [:]
+        for report in clubReports {
+            for event in report.events where event.clubID == clubID {
+                contributions[event.scorer, default: 0] += 1
+                if let assister = event.assister {
+                    contributions[assister, default: 0] += 1
+                }
+            }
+        }
+        let cleanSheets = clubReports.filter { report in
+            let conceded = report.homeClubID == clubID ? report.awayGoals : report.homeGoals
+            return conceded == 0
+        }.count
+
+        let totalWeight = starters.reduce(0.0) { $0 + $1.position.scoringWeight }
+        let totalContributions = starters.reduce(0) { $0 + (contributions[$1.name] ?? 0) }
+        let cleanSheetTarget = max(3, Int((Double(clubReports.count) * GameRules.performanceBonusCleanSheetShare).rounded()))
+
+        var standing: [UUID: SeasonBonusStatus] = [:]
+        for player in starters {
+            if player.position == .goalkeeper {
+                standing[player.id] = SeasonBonusStatus(
+                    produced: cleanSheets,
+                    required: cleanSheetTarget,
+                    unit: "clean sheets"
+                )
+                continue
+            }
+            guard totalWeight > 0 else { continue }
+            let expected = Double(totalContributions) * player.position.scoringWeight / totalWeight
+            let needed = expected + GameRules.performanceBonusDeviation * expected.squareRoot() + 1
+            standing[player.id] = SeasonBonusStatus(
+                produced: contributions[player.name] ?? 0,
+                required: Int(needed.rounded(.up)),
+                unit: "goal contributions"
+            )
+        }
+        return standing
     }
 }

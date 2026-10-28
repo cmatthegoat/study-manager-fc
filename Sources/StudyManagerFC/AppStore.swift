@@ -35,12 +35,25 @@ enum GameError: LocalizedError {
     }
 }
 
+/// One change to a player's fitness caused by the last match, so the result screen can say
+/// who went down and who came back instead of leaving it to be discovered in the squad list.
+struct InjuryUpdate: Identifiable, Hashable {
+    var id = UUID()
+    let playerName: String
+    /// Matches the player will sit out. Zero means he has recovered and can be picked again.
+    let matchesOut: Int
+
+    var isRecovery: Bool { matchesOut == 0 }
+}
+
 struct SimulationOutcome {
     let userReport: MatchReport?
     let simulatedCount: Int
     let phasePlayed: SeasonPhase
     let championClub: Club?
     let trophy: TrophyRecord?
+    /// New injuries and recoveries from this matchday, in the order they happened.
+    var injuries: [InjuryUpdate] = []
 }
 
 struct LevelUpAnnouncement: Equatable {
@@ -67,6 +80,9 @@ final class AppStore {
     var timerTodoID: UUID?
     /// Set when a player levels up, so the level-up popup can congratulate the user.
     var levelUpAnnouncement: LevelUpAnnouncement?
+    /// Minutes banked by a paused timer. While this is set the session has not been filed
+    /// yet, so its type, subject, topic and marks can still be edited before it is logged.
+    var pendingTimerMinutes: Int?
 
     @ObservationIgnored private let persistence: PersistenceStore
     @ObservationIgnored private var timer: Timer?
@@ -80,6 +96,7 @@ final class AppStore {
         self.timerElapsedSeconds = 0
         self.saveErrorMessage = nil
         self.lastTimerSessionMinutes = 0
+        self.pendingTimerMinutes = nil
         self.timerCreditedMinutes = 0
 
         if CommandLine.arguments.contains("--verify-save") {
@@ -283,7 +300,383 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward (no double-pay), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, marking JSON parsing")
+            // Averages: marks pool by marks attempted, and two subjects with a topic of the
+            // same name stay as separate bars instead of merging.
+            func marked(
+                _ subject: StudySubject,
+                topic: String,
+                _ obtained: Int,
+                _ total: Int
+            ) -> StudySession {
+                StudySession(
+                    id: UUID(),
+                    date: Date(),
+                    kind: .pastPaper,
+                    title: topic,
+                    minutes: 60,
+                    cashEarned: 0,
+                    xpEarned: 0,
+                    quantity: 1,
+                    subject: subject,
+                    marksObtained: obtained,
+                    marksTotal: total,
+                    subtopicName: topic
+                )
+            }
+            let pooled = [
+                marked(.ext1Maths, topic: "Vectors", 18, 20),
+                marked(.ext1Maths, topic: "Calculus", 5, 10),
+                marked(.physics, topic: "Vectors", 3, 4)
+            ]
+            let bySubject = MarksAverages.bySubject(pooled)
+            guard let mathsRow = bySubject.first(where: { $0.id == StudySubject.ext1Maths.shortName }),
+                  mathsRow.pieces == 2,
+                  mathsRow.obtained == 23,
+                  mathsRow.total == 30,
+                  mathsRow.percentage == 77 else {
+                print("SELF TEST FAIL: subject averages did not pool marks attempted")
+                exit(1)
+            }
+            let byTopic = MarksAverages.byTopic(pooled)
+            let vectorRow = byTopic.first { $0.label.hasPrefix("Vectors · \(StudySubject.ext1Maths.shortName)") }
+            guard byTopic.count == 3,
+                  Set(byTopic.map(\.label)).count == 3,
+                  vectorRow?.percentage == 90 else {
+                print("SELF TEST FAIL: topic averages merged same-named topics or lost a percentage (rows=\(byTopic.count) labels=\(Set(byTopic.map(\.label)).count) prefix=\(byTopic.first(where: { $0.id.hasPrefix("\(StudySubject.ext1Maths.shortName)|Vectors") })?.percentage ?? -1) short=\(StudySubject.ext1Maths.shortName))")
+                exit(1)
+            }
+
+            // Formations: the XI survives a shape change, the choice persists, and a career
+            // saved before formations existed still opens as a 4-3-3.
+            let formationStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("formations", isDirectory: true))
+            let tactical = AppStore(persistence: formationStore)
+            try tactical.startCareer(with: "barcelona")
+            guard tactical.formation == .f433, tactical.state.lineup.count == 11 else {
+                print("SELF TEST FAIL: a new career did not start in a full 4-3-3 (\(tactical.state.lineup.count) picked)")
+                exit(1)
+            }
+            tactical.setFormation(.f442)
+            let switchedSlots = Set(Formation.f442.slots.map(\.id))
+            guard tactical.formation == .f442,
+                  tactical.state.lineup.count == 11,
+                  Set(tactical.state.lineup.values).count == 11,
+                  tactical.state.lineup.keys.allSatisfy({ switchedSlots.contains($0) }) else {
+                print("SELF TEST FAIL: switching to a 4-4-2 left the XI \(tactical.state.lineup.count) players in \(tactical.state.lineup.count == Set(tactical.state.lineup.values).count ? "valid" : "duplicate") slots")
+                exit(1)
+            }
+            let reloadedTactics = AppStore(persistence: formationStore)
+            guard reloadedTactics.formation == .f442 else {
+                print("SELF TEST FAIL: the chosen formation did not persist")
+                exit(1)
+            }
+            if let saved = try? Data(contentsOf: formationStore.saveURL),
+               var object = try? JSONSerialization.jsonObject(with: saved) as? [String: Any] {
+                object.removeValue(forKey: "formation")
+                try JSONSerialization.data(withJSONObject: object).write(to: formationStore.saveURL)
+                let oldCareer = AppStore(persistence: formationStore)
+                guard oldCareer.formation == .f433, oldCareer.state.lineup.count == 11 else {
+                    print("SELF TEST FAIL: a save without a formation did not fall back to a 4-3-3")
+                    exit(1)
+                }
+            }
+
+            // Swapping two starters keeps both men on the pitch.
+            let filledSlots = tactical.lineupSlots.compactMap { slot in
+                tactical.state.lineup[slot.id].map { (slot.id, $0) }
+            }
+            if filledSlots.count >= 2 {
+                let (firstSlotID, firstPlayerID) = filledSlots[0]
+                let (secondSlotID, secondPlayerID) = filledSlots[1]
+                tactical.assign(playerID: firstPlayerID, to: secondSlotID)
+                guard tactical.state.lineup[secondSlotID] == firstPlayerID,
+                      tactical.state.lineup[firstSlotID] == secondPlayerID else {
+                    print("SELF TEST FAIL: swapping two starters dropped one of them out of the XI")
+                    exit(1)
+                }
+            }
+
+            // Injuries: a match can rule a starter out, the report names him, and he comes
+            // back when his matches are up. Forced rolls keep this deterministic.
+            var fitnessPlayers = market.state.players
+            var forcedLineup: [String: UUID] = [:]
+            var expectedInjuries = 0
+            for slot in LineupSlot.all {
+                guard let id = market.state.lineup[slot.id],
+                      fitnessPlayers.contains(where: { $0.id == id }) else { continue }
+                forcedLineup[slot.id] = id
+                expectedInjuries += 1
+            }
+            let forced = AppStore.applyMatchFitness(players: &fitnessPlayers, lineup: forcedLineup, roll: { 0 })
+            guard forced.count == expectedInjuries,
+                  forced.allSatisfy({ !$0.isRecovery && $0.matchesOut == GameRules.injuryMatches && !$0.playerName.isEmpty }),
+                  fitnessPlayers.filter({ $0.isInjured }).count == expectedInjuries else {
+                print("SELF TEST FAIL: a match did not injure and report the starting XI")
+                exit(1)
+            }
+            guard let hurtIndex = fitnessPlayers.firstIndex(where: { $0.isInjured }) else {
+                print("SELF TEST FAIL: injuries were applied without an isInjured flag")
+                exit(1)
+            }
+            let hurtName = fitnessPlayers[hurtIndex].name
+            fitnessPlayers[hurtIndex].matchesMissed = 1
+            let healed = AppStore.applyMatchFitness(players: &fitnessPlayers, lineup: forcedLineup, roll: { 1 })
+            guard healed.contains(where: { $0.playerName == hurtName && $0.isRecovery }),
+                  !fitnessPlayers[hurtIndex].isInjured else {
+                print("SELF TEST FAIL: an injured player did not recover after his matches out")
+                exit(1)
+            }
+
+            // A club's rating is the eleven it can field, not the EA club-level field: the
+            // data file carries 94 for Real Madrid while their best XI averages far less.
+            if let madrid = ClubDatabase.club(for: "real-madrid"),
+               let madridXI = PlayerFactory.bestXIRating(for: "real-madrid") {
+                guard madrid.rating == madridXI, madrid.rating < 94, madrid.rating >= 80 else {
+                    print("SELF TEST FAIL: the club rating is not the XI average (\(madrid.rating) shown, \(madridXI) from the eleven)")
+                    exit(1)
+                }
+            }
+
+            // Changing team keeps the whole career and starts a new season at the new club.
+            let moveStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("move", isDirectory: true))
+            let mover = AppStore(persistence: moveStore)
+            try mover.startCareer(with: "barcelona")
+            let seasonBefore = mover.state.seasonNumber
+            let xpBefore = mover.state.xp
+            let cashBefore = mover.state.clubCash
+            let squadBefore = Set(mover.state.players.map(\.id))
+            let lineupBefore = mover.state.lineup
+            _ = try mover.changeClub(to: "real-madrid")
+            guard mover.state.managedClubID == "real-madrid",
+                  mover.state.seasonNumber == seasonBefore + 1,
+                  mover.state.season?.number == seasonBefore + 1,
+                  mover.state.xp == xpBefore,
+                  mover.state.clubCash == cashBefore,
+                  Set(mover.state.players.map(\.id)) == squadBefore,
+                  mover.state.players.allSatisfy({ $0.clubID == "real-madrid" }),
+                  mover.state.lineup == lineupBefore else {
+                print("SELF TEST FAIL: changing team lost career data, left old club ids or did not start a new season")
+                exit(1)
+            }
+            guard (try? mover.changeClub(to: "real-madrid")) == nil,
+                  let movedSave = try moveStore.load(),
+                  movedSave.managedClubID == "real-madrid",
+                  movedSave.seasonNumber == seasonBefore + 1 else {
+                print("SELF TEST FAIL: the club change was not saved, or the same club could be re-selected")
+                exit(1)
+            }
+
+            // A new season heals everyone: nobody carries a knock or a countdown over.
+            var wounded = market.state.players
+            wounded[0].isInjured = true
+            wounded[0].matchesMissed = 2
+            wounded[1].isInjured = false
+            wounded[1].matchesMissed = 1
+            let freshSeasonSquad = AppStore.healedForNewSeason(wounded)
+            guard freshSeasonSquad.count == wounded.count,
+                  freshSeasonSquad.allSatisfy({ !$0.isInjured && $0.matchesMissed == 0 }) else {
+                print("SELF TEST FAIL: a new season did not clear injuries")
+                exit(1)
+            }
+
+            // Development is one curve for everybody: a bench teenager with a large gap gains
+            // every single season and still arrives at his ceiling well before he declines.
+            // No season is ever a dead one, whether or not he makes the eleven.
+            var growthGenerator = SeededGenerator(seed: 24_680)
+            var learner = Player(
+                id: UUID(),
+                name: "Test Prospect",
+                nationCode: "ESP",
+                position: .striker,
+                age: 16,
+                overall: 60,
+                potential: 90,
+                rarity: .wonderkid,
+                attributes: PlayerAttributes(pace: 60, shooting: 60, passing: 60, defending: 40, physical: 55),
+                retirementAge: GameRules.retirementAge,
+                joinedSeason: 1
+            )
+            while learner.age < 32 {
+                let before = learner.overall
+                learner.age += 1
+                if learner.age <= GameRules.growthUntilAge {
+                    learner.overall = min(
+                        learner.potential,
+                        learner.overall + AppStore.seasonalGain(for: learner, at: learner.age, using: &growthGenerator)
+                    )
+                }
+                if before < learner.potential, learner.age <= GameRules.growthUntilAge, learner.overall <= before {
+                    print("SELF TEST FAIL: a developing player had a season with no progress at \(learner.age)")
+                    exit(1)
+                }
+            }
+            guard learner.overall == 90 else {
+                print("SELF TEST FAIL: a prospect never reached his potential (stopped at \(learner.overall) of 90 by \(learner.age))")
+                exit(1)
+            }
+
+            // An outstanding season earns a permanent point for the man who produced it, at
+            // every position, measured against what his role was expected to deliver.
+            func performancePlayer(_ name: String, _ position: PlayerPosition, overall: Int, age: Int) -> Player {
+                Player(
+                    id: UUID(),
+                    name: name,
+                    nationCode: "ESP",
+                    position: position,
+                    age: age,
+                    overall: overall,
+                    potential: overall,
+                    rarity: .gold,
+                    attributes: PlayerAttributes(pace: overall, shooting: overall, passing: overall, defending: overall, physical: overall),
+                    retirementAge: GameRules.retirementAge,
+                    joinedSeason: 1
+                )
+            }
+            let keeper = performancePlayer("Test Keeper", .goalkeeper, overall: 80, age: 28)
+            let back = performancePlayer("Test Back", .centerBack, overall: 80, age: 28)
+            let striker = performancePlayer("Test Striker", .striker, overall: 80, age: 28)
+            let quiet = performancePlayer("Test Quiet", .striker, overall: 80, age: 28)
+            let performanceSquad = [keeper, back, striker, quiet]
+            let performanceLineup = Dictionary(uniqueKeysWithValues: performanceSquad.enumerated().map { ("slot-\($0.offset)", $0.element.id) })
+            var performanceReports: [MatchReport] = []
+            for round in 0..<4 {
+                var events: [MatchEvent] = []
+                // Six goals: the centre back turns provider twice and the striker hauls in four.
+                for index in 0..<6 {
+                    events.append(
+                        MatchEvent(
+                            id: UUID(),
+                            minute: index * 10 + 5,
+                            clubID: "arsenal",
+                            scorer: index < 4 ? striker.name : striker.name,
+                            assister: index < 2 ? back.name : nil,
+                            isPenalty: false
+                        )
+                    )
+                }
+                performanceReports.append(
+                    MatchReport(
+                        id: UUID(),
+                        fixtureID: UUID(),
+                        phase: .league,
+                        round: round + 1,
+                        homeClubID: "arsenal",
+                        awayClubID: "chelsea",
+                        homeGoals: 6,
+                        awayGoals: 0,
+                        homePenalties: nil,
+                        awayPenalties: nil,
+                        events: events,
+                        homeRating: 80,
+                        awayRating: 75,
+                        summary: "",
+                        playedAt: Date()
+                    )
+                )
+            }
+            let seasonRewards = SeasonPerformance.rewards(
+                players: performanceSquad,
+                lineup: performanceLineup,
+                reports: performanceReports,
+                clubID: "arsenal"
+            )
+            let rewardedNames = Set(seasonRewards.map(\.name))
+            guard rewardedNames.contains(striker.name),
+                  rewardedNames.contains(back.name),
+                  !rewardedNames.contains(quiet.name),
+                  seasonRewards.allSatisfy({ $0.gain == 1 && !$0.note.isEmpty }) else {
+                print("SELF TEST FAIL: an outstanding season was not rewarded by position, or a quiet one was (\(seasonRewards.map(\.name)))")
+                exit(1)
+            }
+            // A bonus never carries a man past his potential: it fills the last point of the gap
+            // and no more. Someone already at the ceiling takes nothing but is spared the
+            // decline, at any age, and everyone else still ages out.
+            let capped = performancePlayer("Capped Star", .striker, overall: 80, age: 24)
+            var rising = performancePlayer("Rising Star", .striker, overall: 78, age: 24)
+            rising.potential = 80
+            let veteran = performancePlayer("Veteran Star", .striker, overall: 80, age: 36)
+            let fadedVeteran = performancePlayer("Faded Veteran", .striker, overall: 80, age: 33)
+            let fading = performancePlayer("Fading Pro", .striker, overall: 80, age: 36)
+            var bonusGenerator = SeededGenerator(seed: 77)
+            let aged = AppStore.developPlayers(
+                [capped, rising, veteran, fadedVeteran, fading],
+                bonuses: [capped.id: 1, rising.id: 1, veteran.id: 1, fadedVeteran.id: 1],
+                using: &bonusGenerator
+            ).players
+            let agedByID = Dictionary(uniqueKeysWithValues: aged.map { ($0.id, $0) })
+            guard let agedCapped = agedByID[capped.id],
+                  let agedRising = agedByID[rising.id],
+                  let agedVeteran = agedByID[veteran.id],
+                  let agedFaded = agedByID[fadedVeteran.id],
+                  let agedFading = agedByID[fading.id],
+                  agedCapped.overall == 80,
+                  agedCapped.potential == 80,
+                  agedRising.overall == 80,
+                  agedRising.overall <= agedRising.potential,
+                  agedVeteran.overall == 80,
+                  agedFaded.overall == 80,
+                  agedFading.overall <= 80 else {
+                print("SELF TEST FAIL: a performance bonus went past potential, or a rewarded veteran still declined")
+                exit(1)
+            }
+            // A player with room to grow is priced for his ceiling at any age — 80 with 90
+            // potential sells as an 85 — and once he is past his peak the price falls each year.
+            let youngProspect = PlayerPricing.valuation(overall: 80, potential: 90, age: 20)
+            let veteranProspect = PlayerPricing.valuation(overall: 80, potential: 90, age: 33)
+            let maxedTeenager = PlayerPricing.valuation(overall: 85, potential: 85, age: 20)
+            let peakedThirtyFour = PlayerPricing.valuation(overall: 85, potential: 85, age: 34)
+            let peakedThirtyEight = PlayerPricing.valuation(overall: 85, potential: 85, age: 38)
+            guard youngProspect == PlayerPricing.fee(forOverall: 85),
+                  veteranProspect < youngProspect,
+                  maxedTeenager == PlayerPricing.fee(forOverall: 85),
+                  peakedThirtyFour < maxedTeenager,
+                  peakedThirtyEight < peakedThirtyFour,
+                  peakedThirtyFour > 0 else {
+                print("SELF TEST FAIL: potential or age did not set the price (\(youngProspect), \(veteranProspect), \(peakedThirtyFour), \(peakedThirtyEight))")
+                exit(1)
+            }
+
+            // Timer review: a paused session is filed only when confirmed, and what lands
+            // is the type, subject and marks chosen in the review sheet.
+            let timerStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("timer", isDirectory: true))
+            let timer = AppStore(persistence: timerStore)
+            try timer.startCareer(with: "arsenal")
+            let cashBeforeTimer = timer.state.clubCash
+            timer.pendingTimerMinutes = 3
+            timer.timerKind = .pastPaper
+            timer.timerSubject = .ext1Maths
+            timer.timerMarksObtained = 8
+            timer.timerMarksTotal = 10
+            timer.confirmTimerSession()
+            let timerReward = StudyReward.calculate(kind: .pastPaper, subject: .ext1Maths, minutes: 3, marksObtained: 8, marksTotal: 10)
+            guard timer.pendingTimerMinutes == nil,
+                  let loggedTimer = timer.state.recentSessions.first,
+                  loggedTimer.kind == .pastPaper,
+                  loggedTimer.subject == .ext1Maths,
+                  loggedTimer.minutes == 3,
+                  loggedTimer.marksObtained == 8,
+                  loggedTimer.marksTotal == 10,
+                  timer.state.clubCash == cashBeforeTimer + timerReward.cash else {
+                print("SELF TEST FAIL: a confirmed timer session was not logged with the reviewed details")
+                exit(1)
+            }
+            timer.pendingTimerMinutes = 4
+            timer.discardTimerSession()
+            guard timer.pendingTimerMinutes == nil, timer.state.recentSessions.count == 1 else {
+                print("SELF TEST FAIL: discarding a paused session still filed it")
+                exit(1)
+            }
+
+            // A perfect one-mark question is not a perfect paper: the same minutes must pay
+            // more for 20/20 than for 1/1, while 1/1 still beats no marks at all.
+            let tinyPerfect = StudyReward.calculate(kind: .pastPaper, subject: .ext1Maths, minutes: 30, marksObtained: 1, marksTotal: 1)
+            let fullPerfect = StudyReward.calculate(kind: .pastPaper, subject: .ext1Maths, minutes: 30, marksObtained: 20, marksTotal: 20)
+            let unmarkedWork = StudyReward.calculate(kind: .pastPaper, subject: .ext1Maths, minutes: 30, marksObtained: nil, marksTotal: nil)
+            guard tinyPerfect.cash < fullPerfect.cash, tinyPerfect.cash > unmarkedWork.cash else {
+                print("SELF TEST FAIL: marks volume did not change the reward for equal minutes")
+                exit(1)
+            }
+
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward (no double-pay), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, injury report + recovery, marking JSON parsing, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, timer sessions filed only after review")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -374,19 +767,24 @@ final class AppStore {
         min(1.0, Double(state.availableMatchMinutes) / Double(GameRules.minutesPerMatch))
     }
 
+    /// The shape the XI is being picked in. Careers saved before formations get a 4-3-3.
+    var formation: Formation { state.activeFormation }
+
+    var lineupSlots: [LineupSlot] { formation.slots }
+
     var lineupIsComplete: Bool {
-        LineupSlot.all.allSatisfy { slot in
+        lineupSlots.allSatisfy { slot in
             guard let id = state.lineup[slot.id] else { return false }
             return !(state.players.first(where: { $0.id == id })?.isInjured ?? true)
         }
     }
 
     var squadMetrics: SquadMetrics {
-        SquadMetrics.calculate(lineup: state.lineup, players: state.players)
+        SquadMetrics.calculate(lineup: state.lineup, players: state.players, slots: lineupSlots)
     }
 
     var userStartingPlayers: [Player] {
-        MatchEngine.userMetricsLineup(players: state.players, lineup: state.lineup)
+        MatchEngine.userMetricsLineup(players: state.players, lineup: state.lineup, slots: lineupSlots)
     }
 
     var benchPlayers: [Player] {
@@ -395,7 +793,7 @@ final class AppStore {
 
     var lineupPlayersBySlot: [String: Player] {
         var result: [String: Player] = [:]
-        for slot in LineupSlot.all {
+        for slot in lineupSlots {
             guard let id = state.lineup[slot.id] else { continue }
             result[slot.id] = state.players.first(where: { $0.id == id })
         }
@@ -552,7 +950,7 @@ final class AppStore {
         let listingPrice: Int?      // price the user set; nil = askingPrice-driven negotiation
 
         var id: Int { record.id }
-        var fee: Int { PlayerPricing.fee(forOverall: record.ovr) }
+        var fee: Int { PlayerPricing.valuation(overall: record.ovr, potential: record.potential, age: record.age) }
         var isUserAskingPrice: Bool { isUserListing && listingPrice != nil }
 
         static func == (lhs: TransferListing, rhs: TransferListing) -> Bool {
@@ -660,7 +1058,7 @@ final class AppStore {
     /// important they are to that club and how big the club is.
     func askingPrice(for listing: TransferListing) -> Int {
         let value = listing.fee
-        let clubRating = FcDatabase.shared.club(listing.clubID)?.rating ?? 75
+        let clubRating = ClubDatabase.club(for: listing.clubID)?.rating ?? 75
         let gap = listing.record.ovr - clubRating
         let base: Double
         switch gap {
@@ -808,6 +1206,33 @@ final class AppStore {
         draft.season = SeasonEngine.newSeason(number: draft.seasonNumber)
         draft.lastTransition = nil
         commit(draft)
+    }
+
+    /// Moves the career to another club. Everything the manager has built travels with him —
+    /// squad, XP and level, Club Cash, trophies, study history, todos and assessments — and
+    /// only the club and the season change. The abandoned season is not aged: players grow
+    /// and retire at the end of a season, and a move is not the end of one.
+    func changeClub(to clubID: String) throws -> Club {
+        guard hasCareer else { throw GameError.noCareer }
+        guard let club = ClubDatabase.club(for: clubID) else { throw GameError.invalidClub }
+        guard club.id != state.managedClubID else { throw GameError.invalidState }
+
+        var draft = state
+        draft.managedClubID = club.id
+        // The squad follows the manager, so it belongs to the new club from now on. Leaving
+        // the old club id on them would list them for sale by a club they no longer play for.
+        for index in draft.players.indices {
+            draft.players[index].clubID = club.id
+        }
+        draft.seasonNumber += 1
+        draft.season = SeasonEngine.newSeason(number: draft.seasonNumber)
+        draft.lastTransition = nil
+        draft.matchesSinceAcademyIntake = 0
+        // A move starts a new season, so it heals like one.
+        draft.players = Self.healedForNewSeason(draft.players)
+        draft.freeAgents = Self.healedForNewSeason(draft.freeAgents)
+        commit(draft)
+        return club
     }
 
     func logStudy(
@@ -1046,7 +1471,7 @@ final class AppStore {
     }
 
     func startTimer() {
-        guard !isTimerRunning else { return }
+        guard !isTimerRunning, pendingTimerMinutes == nil else { return }
         timerElapsedSeconds = 0
         timerCreditedMinutes = 0
         lastTimerSessionMinutes = 0
@@ -1060,52 +1485,56 @@ final class AppStore {
         timer = newTimer
     }
 
+    /// Stops the clock and banks its minutes without filing anything. The dashboard opens a
+    /// review sheet so the work can be given a type, subject, topic and marks first.
     func pauseTimer() {
         guard isTimerRunning else { return }
         timer?.invalidate()
         timer = nil
         isTimerRunning = false
         let minutes = timerCreditedMinutes
-        if minutes > 0, timerKind != .focusSession {
-            // Homework, past papers and exam questions are logged through the normal path,
-            // so they earn the same rewards and marks as a manual log.
-            let kind = timerKind
-            let subject = timerSubject
-            let subtopic = timerSubtopicID
-            let obtained = timerMarksObtained
-            let total = timerMarksTotal
+        timerCreditedMinutes = 0
+        guard minutes > 0 else {
             timerElapsedSeconds = 0
-            timerCreditedMinutes = 0
-            logStudy(kind: kind, title: "", minutes: minutes, quantity: 1, subject: subject, subtopicID: subtopic, marksObtained: obtained, marksTotal: total)
-            lastTimerSessionMinutes = minutes
+            pendingTimerMinutes = nil
             timerTodoID = nil
             return
         }
-        if minutes > 0 {
-            let cash = minutes * GameRules.clubCashPerMinute
-            let xp = minutes * GameRules.xpPerMinute
-            var draft = state
-            draft.study.totalSessions += 1
-            let topic = timerSubtopicID.flatMap { id in draft.subtopics.first(where: { $0.id == id }) }
-            let session = StudySession(
-                id: UUID(),
-                date: Date(),
-                kind: .focusSession,
-                title: topic.map { "\(timerSubject.shortName) - \($0.name)" } ?? "Focus session",
-                minutes: minutes,
-                cashEarned: cash,
-                xpEarned: xp,
-                quantity: minutes,
-                subject: timerSubject,
-                subtopicID: topic?.id,
-                subtopicName: topic?.name
-            )
-            draft.recentSessions.insert(session, at: 0)
-            commit(draft)
-            lastTimerSessionMinutes = minutes
-        }
+        pendingTimerMinutes = minutes
+    }
+
+    /// Files the paused session using whatever was set in the review sheet. Nothing is paid
+    /// while the clock runs, so switching the type at the end cannot pay the same minute twice.
+    func confirmTimerSession() {
+        guard let minutes = pendingTimerMinutes else { return }
+        let kind = timerKind
+        let marksObtained = kind.supportsMarking ? timerMarksObtained : nil
+        let marksTotal = kind.supportsMarking ? timerMarksTotal : nil
+        pendingTimerMinutes = nil
+        lastTimerSessionMinutes = minutes
+        timerElapsedSeconds = 0
+        timerMarksObtained = nil
+        timerMarksTotal = nil
+        timerTodoID = nil
+        logStudy(
+            kind: kind,
+            title: "",
+            minutes: minutes,
+            quantity: 1,
+            subject: timerSubject,
+            subtopicID: timerSubtopicID,
+            marksObtained: marksObtained,
+            marksTotal: marksTotal
+        )
+    }
+
+    /// Throws a paused session away: nothing is logged and nothing is paid.
+    func discardTimerSession() {
+        pendingTimerMinutes = nil
         timerElapsedSeconds = 0
         timerCreditedMinutes = 0
+        timerMarksObtained = nil
+        timerMarksTotal = nil
         timerTodoID = nil
     }
 
@@ -1115,16 +1544,29 @@ final class AppStore {
         isTimerRunning = false
         timerElapsedSeconds = 0
         timerCreditedMinutes = 0
+        pendingTimerMinutes = nil
     }
 
     func assign(playerID: UUID, to slotID: String) {
-        guard let slot = LineupSlot.slot(for: slotID), player(for: playerID) != nil else { return }
+        guard let slot = lineupSlots.first(where: { $0.id == slotID }), player(for: playerID) != nil else { return }
         var draft = state
+        let previousSlotID = draft.lineup.first(where: { $0.value == playerID })?.key
+        let occupant = draft.lineup[slot.id]
         for (key, value) in draft.lineup where value == playerID {
             draft.lineup.removeValue(forKey: key)
         }
         draft.lineup[slot.id] = playerID
         draft.bench.removeAll { $0 == playerID }
+        // Moving a player within the XI swaps him with whoever held the slot, so a shuffle
+        // never quietly drops a starter out of the side.
+        if let previousSlotID,
+           previousSlotID != slot.id,
+           let occupant,
+           occupant != playerID,
+           lineupSlots.contains(where: { $0.id == previousSlotID }) {
+            draft.lineup[previousSlotID] = occupant
+            draft.bench.removeAll { $0 == occupant }
+        }
         commit(draft)
     }
 
@@ -1158,7 +1600,7 @@ final class AppStore {
         guard let player = player(for: playerID) else { return }
         if state.lineup.values.contains(playerID) || state.bench.contains(playerID) { return }
         var draft = state
-        let emptySlots = LineupSlot.all.filter { draft.lineup[$0.id] == nil }
+        let emptySlots = lineupSlots.filter { draft.lineup[$0.id] == nil }
         let bestSlot = emptySlots
             .filter { $0.position == player.position }
             .first
@@ -1175,10 +1617,65 @@ final class AppStore {
     }
 
     func autoPickSquad() {
-        let result = PlayerFactory.autoLineup(players: state.players)
+        let result = PlayerFactory.autoLineup(players: state.players, formation: formation)
         var draft = state
         draft.lineup = result.0
         draft.bench = result.1
+        commit(draft)
+    }
+
+    /// Switches the XI to another shape. Players keep their place wherever the new formation
+    /// has the same slot, and the vacancies a new shape creates are filled from the players it
+    /// displaced, then the bench, then the squad — so changing formation never halves your XI.
+    func setFormation(_ newFormation: Formation) {
+        guard newFormation != formation, state.managedClubID != nil else { return }
+        var draft = state
+        let playerMap = Dictionary(uniqueKeysWithValues: draft.players.map { ($0.id, $0) })
+        let newSlotIDs = Set(newFormation.slots.map(\.id))
+
+        var kept: [String: UUID] = [:]
+        for slot in newFormation.slots {
+            guard let id = draft.lineup[slot.id], playerMap[id] != nil else { continue }
+            kept[slot.id] = id
+        }
+
+        let keptIDs = Set(kept.values)
+        var displaced: [UUID] = []
+        for (slotID, playerID) in draft.lineup where !newSlotIDs.contains(slotID) {
+            if !keptIDs.contains(playerID), !displaced.contains(playerID) {
+                displaced.append(playerID)
+            }
+        }
+
+        var pool: [Player] = displaced.compactMap { playerMap[$0] }
+        let poolIDs = Set(pool.map(\.id))
+        for id in draft.bench where !keptIDs.contains(id) && !poolIDs.contains(id) {
+            if let player = playerMap[id] { pool.append(player) }
+        }
+        for player in draft.players
+        where !keptIDs.contains(player.id) && !pool.contains(where: { $0.id == player.id }) {
+            pool.append(player)
+        }
+
+        for slot in newFormation.slots where kept[slot.id] == nil {
+            guard let best = pool.max(by: { lhs, rhs in
+                let left = lhs.adjustedRating(for: slot)
+                let right = rhs.adjustedRating(for: slot)
+                if left == right { return lhs.overall < rhs.overall }
+                return left < right
+            }) else { break }
+            kept[slot.id] = best.id
+            pool.removeAll { $0.id == best.id }
+        }
+
+        draft.formation = newFormation
+        draft.lineup = kept
+        draft.bench.removeAll { kept.values.contains($0) }
+        // Anyone the new shape dropped takes a free bench place rather than dropping off the
+        // matchday squad entirely.
+        for id in displaced where !kept.values.contains(id) && draft.bench.count < GameRules.benchLimit {
+            if !draft.bench.contains(id) { draft.bench.append(id) }
+        }
         commit(draft)
     }
 
@@ -1296,6 +1793,7 @@ final class AppStore {
         var updatedReports = season.reports
         var userReport: MatchReport?
         var simulatedCount = 0
+        var injuries: [InjuryUpdate] = []
         var ledger = state.scoringLedger
         // Saves from before the ledger existed seed it from the reports already played.
         if ledger.isEmpty {
@@ -1341,25 +1839,13 @@ final class AppStore {
             ledger.record(report: simulation.report)
             if fixture.homeClubID == managedClub.id || fixture.awayClubID == managedClub.id {
                 userReport = simulation.report
-                // Count down existing injuries first, so new injuries keep their full 2-match penalty.
-                for i in state.players.indices where state.players[i].matchesMissed > 0 {
-                    state.players[i].matchesMissed -= 1
-                    if state.players[i].matchesMissed == 0 {
-                        state.players[i].isInjured = false
-                    }
-                }
-                // Apply injuries to starting 11 (5% chance each)
-                for slot in LineupSlot.all {
-                    if let playerID = state.lineup[slot.id],
-                       let index = state.players.firstIndex(where: { $0.id == playerID }) {
-                        var player = state.players[index]
-                        if !player.isInjured && Double.random(in: 0..<1) < 0.05 {
-                            player.isInjured = true
-                            player.matchesMissed = 2
-                            state.players[index] = player
-                        }
-                    }
-                }
+                injuries.append(
+                    contentsOf: Self.applyMatchFitness(
+                        players: &state.players,
+                        lineup: state.lineup,
+                        slots: lineupSlots
+                    )
+                )
             }
             simulatedCount += 1
         }
@@ -1450,8 +1936,54 @@ final class AppStore {
             simulatedCount: simulatedCount,
             phasePlayed: phasePlayed,
             championClub: ClubDatabase.club(for: season.championClubID),
-            trophy: trophy
+            trophy: trophy,
+            injuries: injuries
         )
+    }
+
+    /// Fitness bookkeeping for one match: existing injuries count down, then each fit starter
+    /// has a chance of going down. Returns every change so the result screen can name them.
+    /// `roll` is injectable so the self-test can force an injury instead of waiting on a 5% chance.
+    static func applyMatchFitness(
+        players: inout [Player],
+        lineup: [String: UUID],
+        slots: [LineupSlot] = LineupSlot.all,
+        roll: () -> Double = { Double.random(in: 0..<1) }
+    ) -> [InjuryUpdate] {
+        var updates: [InjuryUpdate] = []
+        // Count down existing injuries first, so new injuries keep their full penalty.
+        for i in players.indices where players[i].matchesMissed > 0 {
+            players[i].matchesMissed -= 1
+            if players[i].matchesMissed == 0 {
+                players[i].isInjured = false
+                updates.append(InjuryUpdate(playerName: players[i].name, matchesOut: 0))
+            }
+        }
+        for slot in slots {
+            guard let playerID = lineup[slot.id],
+                  let index = players.firstIndex(where: { $0.id == playerID })
+            else { continue }
+            if !players[index].isInjured && roll() < GameRules.injuryChance {
+                players[index].isInjured = true
+                players[index].matchesMissed = GameRules.injuryMatches
+                updates.append(
+                    InjuryUpdate(playerName: players[index].name, matchesOut: GameRules.injuryMatches)
+                )
+            }
+        }
+        return updates
+    }
+
+    /// Pre-season is long enough for every knock to clear, so a new season starts with a
+    /// clean bill of health: no injured player, and nobody carrying a countdown into it.
+    static func healedForNewSeason(_ players: [Player]) -> [Player] {
+        players.map { player in
+            guard player.isInjured || player.matchesMissed > 0 else { return player }
+            var healed = player
+            healed.isInjured = false
+            healed.matchesMissed = 0
+            return healed
+        }
     }
 
     func startNextSeason() throws -> SeasonTransition {
@@ -1469,13 +2001,23 @@ final class AppStore {
         )
 
         var generator = SeededGenerator(seed: StableSeed.value(for: "aging-\(oldNumber)-\(managedClub.id)"))
-        let starters = Set(state.lineup.values)
-        let squadResult = developPlayers(state.players, starters: starters, using: &generator)
-        let poolResult = developPlayers(state.freeAgents, starters: [], using: &generator)
+        // Men who carried the season get a point on top of the normal curve. It is measured
+        // from the season that has just finished, before anyone is aged.
+        let rewards = SeasonPerformance.rewards(
+            players: state.players,
+            lineup: state.lineup,
+            reports: season.reports,
+            clubID: managedClub.id
+        )
+        let bonuses = Dictionary(rewards.map { ($0.id, $0.gain) }, uniquingKeysWith: +)
+        let squadResult = Self.developPlayers(state.players, bonuses: bonuses, using: &generator)
+        let poolResult = Self.developPlayers(state.freeAgents, using: &generator)
 
         var draft = state
         draft.players = squadResult.players
         draft.freeAgents = poolResult.players
+        draft.players = Self.healedForNewSeason(draft.players)
+        draft.freeAgents = Self.healedForNewSeason(draft.freeAgents)
         let retiredIDs = Set(squadResult.retiredIDs)
         draft.lineup = draft.lineup.filter { !retiredIDs.contains($0.value) }
         draft.bench.removeAll { retiredIDs.contains($0) }
@@ -1504,7 +2046,8 @@ final class AppStore {
             userFinish: userFinish,
             retirees: squadResult.retiredNames,
             youthAdded: youthCount,
-            newSeason: draft.seasonNumber
+            newSeason: draft.seasonNumber,
+            improvements: rewards.filter { !retiredIDs.contains($0.id) }
         )
         draft.lastTransition = transition
         commit(draft)
@@ -1543,21 +2086,10 @@ final class AppStore {
     }
 
     private func creditTimerMinute() {
-        // Non-focus work is paid in full when the timer is paused, so only count the minute here.
-        guard timerKind == .focusSession else {
-            timerCreditedMinutes += 1
-            return
-        }
-        let now = Date()
-        var draft = state
-        draft.clubCash += GameRules.clubCashPerMinute
-        let levelsGained = applyXP(GameRules.xpPerMinute, to: &draft)
-        draft.availableMatchMinutes += 1
-        draft.study.totalStudyMinutes += 1
-        registerStudyDay(&draft.study, date: now)
+        // Minutes are only counted here. Cash, XP, match minutes and the log entry all wait
+        // for the review sheet, so the type, subject, topic and marks can change right up
+        // until the session is confirmed.
         timerCreditedMinutes += 1
-        commit(draft)
-        announceLevelUps(levelsGained)
     }
 
     // MARK: - Transfer offers
@@ -1738,11 +2270,13 @@ final class AppStore {
         return weights.keys.first ?? .silver
     }
 
-    /// Ages every player by a year. Starters develop faster than squad players who did
-    /// not feature in the XI, and players retire once they reach their retirement age.
-    private func developPlayers(
+    /// Ages every player by a year. Every player develops on the same curve — the eleven
+    /// gets no advantage — and everybody under `GameRules.growthUntilAge` who is short of
+    /// their potential improves by enough to reach it by `GameRules.potentialDeadlineAge`.
+    /// Players retire once they reach their retirement age.
+    static func developPlayers(
         _ players: [Player],
-        starters: Set<UUID>,
+        bonuses: [UUID: Int] = [:],
         using generator: inout SeededGenerator
     ) -> (players: [Player], retiredNames: [String], retiredIDs: [UUID]) {
         var developed: [Player] = []
@@ -1756,24 +2290,39 @@ final class AppStore {
                 continue
             }
             player.age = nextAge
-            let isStarter = starters.contains(player.id)
-            if nextAge <= 22 && player.overall < player.potential {
-                let gain = isStarter
-                    ? Int.random(in: 1...3, using: &generator)
-                    : Int.random(in: 0...2, using: &generator)
-                player.overall = min(player.potential, player.overall + gain)
-            } else if nextAge <= 27 && player.overall < player.potential {
-                if isStarter {
-                    player.overall = min(player.potential, player.overall + Int.random(in: 0...1, using: &generator))
-                } else if Int.random(in: 0..<3, using: &generator) == 0 {
-                    player.overall = min(player.potential, player.overall + 1)
-                }
-            } else if nextAge >= 30 {
+            let bonus = bonuses[player.id] ?? 0
+            if nextAge <= GameRules.growthUntilAge && player.overall < player.potential {
+                player.overall = min(
+                    player.potential,
+                    player.overall + Self.seasonalGain(for: player, at: nextAge, using: &generator)
+                )
+            } else if nextAge >= 30 && bonus == 0 {
+                // A man who carried the season does not decline with it.
                 player.overall = max(45, player.overall - Int.random(in: 0...2, using: &generator))
+            }
+            // The bonus closes part of the gap to the ceiling but never breaches it: potential
+            // is the ceiling a player was signed on, so a good season inside it is worth a
+            // point and a man already standing on it takes nothing more. He still does not
+            // decline, though — the season he carried is the one thing that holds his rating.
+            if bonus > 0 && nextAge <= GameRules.performanceBonusMaxAge {
+                player.overall = max(player.overall, min(player.potential, player.overall + bonus))
             }
             developed.append(player)
         }
         return (developed, retiredNames, retiredIDs)
+    }
+
+    /// How many points a developing player gains this season. The floor is the gap to their
+    /// potential split over the seasons they have left before the deadline, so the ceiling is
+    /// reached on time no matter how big the gap is. A one-point spread keeps two teenagers
+    /// with the same rating from moving in lockstep, without ever allowing a dead season.
+    static func seasonalGain(for player: Player, at nextAge: Int, using generator: inout SeededGenerator) -> Int {
+        let gap = player.potential - player.overall
+        guard gap > 0 else { return 0 }
+        let seasonsLeft = max(1, GameRules.potentialDeadlineAge - nextAge)
+        let baseline = Int(ceil(Double(gap) / Double(seasonsLeft)))
+        let spread = nextAge <= 22 ? Int.random(in: 0...1, using: &generator) : 0
+        return max(1, baseline + spread)
     }
 
     private func phaseOrder(_ phase: SeasonPhase) -> Int {

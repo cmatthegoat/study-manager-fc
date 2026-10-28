@@ -121,23 +121,17 @@ struct TodosView: View {
                 TextField("e.g. p1 #Ext 2 Maths - Complex Numbers: finish 4.2", text: $draftTitle)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(add)
-                Picker("Subject", selection: $selectedSubject) {
-                    ForEach(StudySubject.allCases) { subject in
-                        Text(subject.shortName).tag(subject)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 150)
-                Picker("Subtopic", selection: $selectedSubtopicID) {
-                    Text("No subtopic").tag(UUID?.none)
-                    ForEach(selectedSubtopics) { topic in
-                        Text(topic.name).tag(Optional(topic.id))
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 170)
+                BentoMenu(
+                    selection: $selectedSubject,
+                    options: StudySubject.allCases.map { BentoOption($0.shortName, value: $0) },
+                    width: 150
+                )
+                BentoMenu(
+                    selection: $selectedSubtopicID,
+                    options: [BentoOption("No subtopic", value: UUID?.none)]
+                        + selectedSubtopics.map { BentoOption($0.name, value: Optional($0.id)) },
+                    width: 170
+                )
                 Button(action: add) {
                     Label("Add Task", systemImage: "plus")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -282,25 +276,21 @@ struct EditTodoRow: View {
                         .textFieldStyle(.roundedBorder)
                 }
                 Section("Subject") {
-                    Picker("Subject", selection: $subject) {
-                        ForEach(StudySubject.allCases) { s in
-                            Text(s.shortName).tag(s)
-                        }
-                    }
-                    .pickerStyle(.menu)
+                    BentoMenu(
+                        selection: $subject,
+                        options: StudySubject.allCases.map { BentoOption($0.shortName, value: $0) }
+                    )
                 }
                 Section("Subtopic") {
                     TextField("Subtopic name", text: $subtopicName)
                         .textFieldStyle(.roundedBorder)
                 }
                 Section("Priority") {
-                    Picker("Priority", selection: $priority) {
-                        Text("None").tag(Optional<Int>(nil))
-                        ForEach([1, 2, 3, 4], id: \.self) { p in
-                            Text("P\(p)").tag(p)
-                        }
-                    }
-                    .pickerStyle(.menu)
+                    BentoMenu(
+                        selection: $priority,
+                        options: [BentoOption("None", value: Int?.none)]
+                            + [1, 2, 3, 4].map { BentoOption("P\($0)", value: Optional($0)) }
+                    )
                 }
             }
             .toolbar {

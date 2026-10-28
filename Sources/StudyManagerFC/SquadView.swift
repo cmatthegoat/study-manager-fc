@@ -10,6 +10,16 @@ struct SquadView: View {
 
     private var metrics: SquadMetrics { store.squadMetrics }
 
+    /// Starters currently ruled out. The XI cannot be fielded until they are replaced.
+    private var injuredStarters: [Player] {
+        store.lineupSlots.compactMap { slot in
+            guard let id = store.state.lineup[slot.id],
+                  let player = store.player(for: id),
+                  player.isInjured else { return nil }
+            return player
+        }
+    }
+
     private var filteredPlayers: [Player] {
         store.state.players
             .filter { player in
@@ -65,7 +75,7 @@ struct SquadView: View {
             ScreenHeader(
                 eyebrow: "\(store.managedClub?.country ?? "Europe") · \(store.managedClub?.name ?? "My Club")",
                 title: "My Squad",
-                subtitle: "Build chemistry, cover every position, and give your club the best chance of European glory."
+                subtitle: "Cover every position, choose your shape, and give your club the best chance of European glory."
             )
             Spacer()
             if let club = store.managedClub {
@@ -77,7 +87,6 @@ struct SquadView: View {
     private var metricsRow: some View {
         HStack(spacing: 10) {
             squadMetric("Overall", "\(metrics.overall)", "Team rating", "chart.bar.fill", .studyGreen)
-            squadMetric("Chemistry", "\(metrics.chemistry)", "Position + nation links", "link", .studyTeal)
             squadMetric("Attack", "\(metrics.attack)", "Attacking line", "bolt.fill", .orange)
             squadMetric("Midfield", "\(metrics.midfield)", "Control", "arrow.triangle.branch", .blue)
             squadMetric("Defence", "\(metrics.defence)", "Back line", "shield.fill", .purple)
@@ -113,11 +122,18 @@ struct SquadView: View {
             VStack(spacing: 12) {
                 HStack {
                     HStack(spacing: 7) {
-                        Pill(text: "4-3-3", color: .studyGreen, icon: "soccerball")
+                        formationMenu
                         if store.lineupIsComplete {
                             Pill(text: "XI COMPLETE", color: .studyGreen, icon: "checkmark")
                         } else {
                             Pill(text: "INCOMPLETE XI", color: .orange, icon: "exclamationmark")
+                        }
+                        if !injuredStarters.isEmpty {
+                            Pill(
+                                text: "\(injuredStarters.count) INJURED",
+                                color: .red,
+                                icon: "cross.case.fill"
+                            )
                         }
                     }
                     Spacer()
@@ -125,10 +141,14 @@ struct SquadView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
-                LineupPitchView(lineup: store.lineupPlayersBySlot) { slot in
+                LineupPitchView(lineup: store.lineupPlayersBySlot, slots: store.lineupSlots) { slot in
                     selectedSlot = slot
                 }
                 .frame(maxWidth: 590)
+
+                if !injuredStarters.isEmpty {
+                    injuryBanner
+                }
             }
             .frame(maxWidth: .infinity)
 
@@ -145,17 +165,6 @@ struct SquadView: View {
                     }
                     .buttonStyle(.bentoProminent)
                     .bentoTint(.primary)
-
-                    HStack {
-                        chemistryRing
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Chemistry")
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            Text("\(metrics.chemistry)/100")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
                 }
                 .surface(padding: 18)
             }
@@ -163,21 +172,58 @@ struct SquadView: View {
         }
     }
 
-    private var chemistryRing: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.primary.opacity(0.08), lineWidth: 8)
-            Circle()
-                .trim(from: 0, to: Double(metrics.chemistry) / 100.0)
-                .stroke(
-                    LinearGradient(colors: [.studyGreen, .studyTeal], startPoint: .top, endPoint: .bottom),
-                    style: StrokeStyle(lineWidth: 8, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-            Text("\(metrics.chemistry)")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
+    /// The shape picker. Switching keeps as much of the XI in place as the new shape allows.
+    private var formationMenu: some View {
+        BentoMenu(
+            selection: Binding(
+                get: { store.formation },
+                set: { store.setFormation($0) }
+            ),
+            options: Formation.allCases.map {
+                BentoOption($0.displayName, value: $0, subtitle: $0.blurb, symbol: "soccerball")
+            },
+            width: 130
+        )
+        .help("Change formation")
+    }
+
+    /// Names the wounded starters and how long they are out, so a blocked matchday has a
+    /// visible cause on this screen rather than a puzzle in the squad list.
+    private var injuryBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "cross.case.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.red)
+                Text(injuredStarters.count == 1 ? "1 starter is injured" : "\(injuredStarters.count) starters are injured")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                Spacer()
+                Text("Tap their position to replace them")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(injuredStarters) { player in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color.red.opacity(0.75))
+                        .frame(width: 6, height: 6)
+                    Text(player.name)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    Spacer()
+                    Pill(
+                        text: "OUT \(player.matchesMissed) MATCH\(player.matchesMissed == 1 ? "" : "ES")",
+                        color: .red
+                    )
+                }
+            }
         }
-        .frame(width: 64, height: 64)
+        .frame(maxWidth: 590, alignment: .leading)
+        .padding(14)
+        .background(Color.red.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.red.opacity(0.28), lineWidth: 1)
+        )
     }
 
     private var playersContent: some View {
@@ -194,14 +240,12 @@ struct SquadView: View {
                 .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .frame(maxWidth: 300)
 
-                Picker("Position", selection: $groupFilter) {
-                    Text("All positions").tag(PositionGroup?.none)
-                    ForEach(PositionGroup.allCases) { group in
-                        Text(group.displayName).tag(PositionGroup?.some(group))
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 150)
+                BentoMenu(
+                    selection: $groupFilter,
+                    options: [BentoOption("All positions", value: PositionGroup?.none)]
+                        + PositionGroup.allCases.map { BentoOption($0.displayName, value: Optional($0)) },
+                    width: 150
+                )
 
                 Spacer()
                 Text("\(filteredPlayers.count) players")
@@ -236,15 +280,21 @@ struct SquadView: View {
 
     private func squadStatus(for player: Player) -> some View {
         Group {
+            if player.isInjured {
+                Pill(text: "INJURED · OUT \(player.matchesMissed)", color: .red, icon: "cross.case.fill")
+            } else {
+                Pill(text: "AVAILABLE", color: .studyGreen, icon: "checkmark.circle.fill")
+            }
             if let slotID = store.state.lineup.first(where: { $0.value == player.id })?.key,
-               let slot = LineupSlot.slot(for: slotID) {
-                Pill(text: "STARTING \(slot.label)", color: .studyGreen, icon: "checkmark.circle.fill")
+               let slot = store.lineupSlots.first(where: { $0.id == slotID }) {
+                Pill(text: "STARTING \(slot.label)", color: .studyTeal, icon: "person.fill.checkmark")
             } else if store.state.bench.contains(player.id) {
                 Pill(text: "ON BENCH", color: .studyGold, icon: "chair.lounge.fill")
             } else {
                 Pill(text: "RESERVE", color: .secondary, icon: "person.fill")
             }
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -258,13 +308,35 @@ private struct PlayerPickerSheet: View {
         return store.player(for: id)
     }
 
-    private var candidates: [Player] {
-        store.state.players.sorted {
+    /// Where a player currently sits in the XI, if anywhere.
+    private func placing(of player: Player) -> LineupSlot? {
+        guard let slotID = store.state.lineup.first(where: { $0.value == player.id })?.key else { return nil }
+        return store.lineupSlots.first(where: { $0.id == slotID })
+    }
+
+    /// Best first for the position being filled.
+    private func ranked(_ players: [Player]) -> [Player] {
+        players.sorted {
             if $0.adjustedRating(for: slot) != $1.adjustedRating(for: slot) {
                 return $0.adjustedRating(for: slot) > $1.adjustedRating(for: slot)
             }
             return $0.overall > $1.overall
         }
+    }
+
+    /// Bench first: they are already on the matchday sheet and are the natural replacements.
+    private var benchOptions: [Player] {
+        ranked(store.state.bench.compactMap { store.player(for: $0) })
+    }
+
+    private var reserveOptions: [Player] {
+        ranked(store.state.players.filter { placing(of: $0) == nil && !store.state.bench.contains($0.id) })
+    }
+
+    /// Men already in the XI are listed last, in their own colour, but stay selectable so
+    /// players can be shuffled between positions.
+    private var xiOptions: [Player] {
+        ranked(store.lineupSlots.compactMap { store.state.lineup[$0.id] }.compactMap { store.player(for: $0) })
     }
 
     var body: some View {
@@ -299,30 +371,29 @@ private struct PlayerPickerSheet: View {
             }
 
             ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(candidates) { player in
-                        Button {
-                            store.assign(playerID: player.id, to: slot.id)
-                            dismiss()
-                        } label: {
-                            HStack {
-                                playerRowContent(player, isCurrent: currentPlayer?.id == player.id)
-                                Spacer()
-                                if currentPlayer?.id == player.id {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(Color.studyGreen)
-                                }
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(
-                                player.position.group == slot.position.group
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    if !benchOptions.isEmpty {
+                        sectionHeader("On the bench", hint: "\(benchOptions.count) ready to step in", tint: .studyGold)
+                        ForEach(benchOptions) { player in
+                            optionRow(player, tint: Color.studyGold.opacity(0.11))
+                        }
+                    }
+                    if !reserveOptions.isEmpty {
+                        sectionHeader("Rest of the squad", hint: "\(reserveOptions.count) in reserve", tint: .secondary)
+                        ForEach(reserveOptions) { player in
+                            optionRow(
+                                player,
+                                tint: player.position.group == slot.position.group
                                     ? Color.studyGreen.opacity(0.055)
-                                    : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    : Color.clear
                             )
                         }
-                        .buttonStyle(.plain)
+                    }
+                    if !xiOptions.isEmpty {
+                        sectionHeader("Already in the XI", hint: "Tap to move, or swap positions", tint: .studyTeal)
+                        ForEach(xiOptions) { player in
+                            optionRow(player, tint: Color.studyTeal.opacity(0.16))
+                        }
                     }
                 }
                 .padding(.horizontal, 22)
@@ -331,6 +402,50 @@ private struct PlayerPickerSheet: View {
         }
         .frame(minWidth: 540, idealWidth: 580, minHeight: 560, idealHeight: 660)
         .background(AppBackground())
+    }
+
+    private func sectionHeader(_ title: String, hint: String, tint: Color) -> some View {
+        HStack(spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .tracking(1.1)
+                .foregroundStyle(tint == .secondary ? Color.secondary : tint)
+            Spacer()
+            Text(hint)
+                .font(.system(size: 8))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+    }
+
+    private func optionRow(_ player: Player, tint: Color) -> some View {
+        Button {
+            store.assign(playerID: player.id, to: slot.id)
+            dismiss()
+        } label: {
+            HStack {
+                playerRowContent(player, isCurrent: currentPlayer?.id == player.id)
+                Spacer()
+                if currentPlayer?.id == player.id {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.studyGreen)
+                } else if let place = placing(of: player) {
+                    Text("IN XI · \(place.label)")
+                        .font(.system(size: 8, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Color.studyTeal)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(tint, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(placing(of: player) == nil ? Color.clear : Color.studyTeal.opacity(0.35), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func playerRowContent(_ player: Player, isCurrent: Bool) -> some View {
@@ -359,9 +474,6 @@ private struct PlayerPickerSheet: View {
             if player.isUserListing {
                 Pill(text: "LISTED", color: .studyGold)
             }
-            if !isCurrent && store.state.bench.contains(player.id) {
-                Pill(text: "BENCH", color: .secondary)
-            }
             Spacer()
         }
     }
@@ -376,7 +488,17 @@ private struct PlayerDetailSheet: View {
 
     private var lineupSlot: LineupSlot? {
         guard let slotID = store.state.lineup.first(where: { $0.value == player.id })?.key else { return nil }
-        return LineupSlot.slot(for: slotID)
+        return store.lineupSlots.first(where: { $0.id == slotID })
+    }
+
+    /// The sheet is handed a snapshot, so listing changes would otherwise be invisible until
+    /// it was closed and reopened. Everything that listing touches reads the live player.
+    private var livePlayer: Player {
+        store.state.players.first(where: { $0.id == player.id }) ?? player
+    }
+
+    private var offersForPlayer: Int {
+        store.state.transferOffers.filter { $0.playerID == player.id }.count
     }
 
     var body: some View {
@@ -411,7 +533,7 @@ private struct PlayerDetailSheet: View {
                         Pill(text: "OVR \(player.overall)", color: player.rarity.accentColor)
                         Pill(text: "POT \(player.potential)", color: .studyTeal)
                         Pill(text: "AGE \(player.age)", color: .secondary)
-                        if player.isUserListing {
+                        if livePlayer.isUserListing {
                             Pill(text: "TRANSFER LISTED", color: .studyGold)
                         }
                     }
@@ -494,11 +616,11 @@ private struct PlayerDetailSheet: View {
                         // Selling through the market beats releasing for a fraction, so listing
                         // is the primary route out of the club.
                         Button {
-                            store.setPlayerListed(player.id, listed: !player.isUserListing)
+                            store.setPlayerListed(player.id, listed: !livePlayer.isUserListing)
                         } label: {
                             Label(
-                                player.isUserListing ? "Remove from transfer list" : "Add to transfer list",
-                                systemImage: player.isUserListing ? "minus.circle" : "arrow.left.arrow.right.circle"
+                                livePlayer.isUserListing ? "Remove from transfer list" : "Add to transfer list",
+                                systemImage: livePlayer.isUserListing ? "minus.circle" : "arrow.left.arrow.right.circle"
                             )
                             .font(.system(size: 11, weight: .semibold))
                             .frame(maxWidth: .infinity)
@@ -507,11 +629,15 @@ private struct PlayerDetailSheet: View {
                         .buttonStyle(.bentoBordered)
                         .bentoTint(.gold)
 
-                        if player.isUserListing {
-                            Text("\(store.state.transferOffers.filter { $0.playerID == player.id }.count) offer(s) waiting. One arrives after each match.")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        if livePlayer.isUserListing {
+                            Text(
+                                offersForPlayer == 0
+                                    ? "Listed for \(livePlayer.marketValue.formatted()). The first offer arrives after your next match."
+                                    : "\(offersForPlayer) offer(s) waiting. Another arrives after each match."
+                            )
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.studyGold)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
                         Button(role: .destructive) {

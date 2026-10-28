@@ -50,23 +50,40 @@ extension StudyManagerFCApp {
         }
         guard MarkingService.availability.isAvailable else { exit(3) }
 
+        let answer = "Q1: 2x = 10, so x = 5. Q2: the derivative of x^2 + 7x at x = 1 is 2x + 7, so the gradient is 9."
         let request = MarkingRequest(
             subject: .ext1Maths,
             title: "Diagnostic paper",
             totalMarks: 10,
-            answerText: "Q1: 2x = 10, so x = 5. Q2: the tangent's gradient at that point is 3.",
-            guidelinesText: "Q1 (5 marks): correct value of x with working. Q2 (5 marks): correct gradient of 3.",
+            answerText: answer,
+            guidelinesText: "Q1 (5 marks): correct value of x with working. Q2 (5 marks): correct gradient of 9.",
+            comments: ""
+        )
+        // The same work with no rubric at all, to prove guidelines are optional end to end.
+        let unguided = MarkingRequest(
+            subject: .ext1Maths,
+            title: "Diagnostic paper (no rubric)",
+            totalMarks: 10,
+            answerText: answer,
+            guidelinesText: "",
             comments: ""
         )
         var finished = false
         Task {
             do {
                 let result = try await MarkingService.mark(request)
-                print("marked: \(result.totalAwarded)/\(result.totalOutOf) across \(result.questions.count) questions")
+                print("marked with rubric: \(result.totalAwarded)/\(result.totalOutOf) across \(result.questions.count) questions")
                 for question in result.questions {
                     print("  \(question.question): \(question.awarded)/\(question.outOf) — \(question.reason)")
                 }
                 print("feedback: \(result.feedback)")
+
+                let unrubricked = try await MarkingService.mark(unguided)
+                print("marked WITHOUT rubric: \(unrubricked.totalAwarded)/\(unrubricked.totalOutOf) across \(unrubricked.questions.count) questions")
+                for question in unrubricked.questions {
+                    print("  \(question.question): \(question.awarded)/\(question.outOf) — \(question.reason)")
+                }
+                print("feedback: \(unrubricked.feedback)")
             } catch {
                 print("mark failed: \(error.localizedDescription)")
             }
@@ -137,6 +154,7 @@ struct MainTabView: View {
     @Environment(AppStore.self) private var store
     @State private var selection: MainSection = .dashboard
     @State private var showingResetConfirmation = false
+    @State private var showingChangeTeam = false
     @State private var resetConfirmationsLeft = MainTabView.requiredResetConfirmations
     private static let requiredResetConfirmations = 5
 
@@ -145,6 +163,7 @@ struct MainTabView: View {
             HStack(spacing: 8) {
                 SectionSwitcher(selection: $selection)
                 TransferOffersButton()
+                changeTeamButton
                 resetButton
             }
             .padding(.horizontal, 20)
@@ -154,6 +173,10 @@ struct MainTabView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(AppBackground())
+        .sheet(isPresented: $showingChangeTeam) {
+            ChangeTeamSheet()
+                .environment(store)
+        }
         .alert(
             "Level up!",
             isPresented: Binding(
@@ -185,6 +208,23 @@ struct MainTabView: View {
         } message: {
             Text("This permanently deletes your club, squad, trophies, Club Cash and study history, then returns you to club selection. Confirm \(resetConfirmationsLeft) more time\(resetConfirmationsLeft == 1 ? "" : "s") to continue.")
         }
+    }
+
+    /// Changing club keeps the career and starts a new season, so it lives beside Reset in
+    /// the top bar — out of the way, but always one click from anywhere in the app.
+    private var changeTeamButton: some View {
+        Button {
+            showingChangeTeam = true
+        } label: {
+            Label("Change Team", systemImage: "arrow.left.arrow.right.circle")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .foregroundStyle(.secondary)
+                .background(Color.primary.opacity(0.05), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Change club and start a new season")
     }
 
     private var resetButton: some View {

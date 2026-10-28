@@ -13,6 +13,8 @@ struct ExamsView: View {
     @State private var overallRank = ""
     @State private var date = Date()
     @State private var workKind: WorkKind = .homework
+    /// Whether the average-marks chart pools work by subject or by topic.
+    @State private var markGrouping: MarkGrouping = .subject
 
     /// Which kind of logged work the marks chart is showing. Assessments are charted
     /// separately above; these are the homework, past papers and exam questions logged
@@ -44,6 +46,21 @@ struct ExamsView: View {
         }
     }
 
+    /// What the average-marks chart groups by. Topics are the finer cut of the same data.
+    private enum MarkGrouping: String, CaseIterable, Identifiable {
+        case subject
+        case topic
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .subject: "Subjects"
+            case .topic: "Topics"
+            }
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
@@ -68,11 +85,11 @@ struct ExamsView: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Add Assessment", subtitle: "Class rank 1 pays the full reward, each place below pays less", symbol: "doc.text.magnifyingglass")
             HStack(spacing: 10) {
-                Picker("Subject", selection: $subject) {
-                    ForEach(StudySubject.allCases) { subject in
-                        Text(subject.displayName).tag(subject)
-                    }
-                }
+                BentoMenu(
+                    selection: $subject,
+                    options: StudySubject.allCases.map { BentoOption($0.displayName, value: $0) },
+                    width: 180
+                )
                 TextField("Title, e.g. Half-yearly", text: $title)
                 DatePicker("Date", selection: $date, displayedComponents: .date)
             }
@@ -155,45 +172,47 @@ struct ExamsView: View {
         .surface(padding: 18)
     }
 
-    /// Marks from the work logged through the timer and quick log, charted the same way the
-    /// assessments are — one series per subject, so a weak module stands out at a glance.
+    /// Marks from the work logged through the timer and quick log, pooled into an average per
+    /// subject or per topic. Comparing averages answers "which module is weakest", which a
+    /// line of dots over dates never did.
     private var workMarksCard: some View {
         let sessions = workSessions
         let aggregate = StudyAggregate.build(from: sessions)
+        let rows = averageRows
         return VStack(alignment: .leading, spacing: 12) {
             SectionHeader(
-                title: "Homework & Practice Marks",
-                subtitle: "Every marked piece you logged, as a percentage",
-                symbol: "chart.line.uptrend.xyaxis"
+                title: "Average Marks",
+                subtitle: markGrouping == .subject
+                    ? "Pooled percentage for each subject across every marked piece"
+                    : "Pooled percentage for each topic across every marked piece",
+                symbol: "chart.bar.fill"
             )
 
-            Picker("Kind", selection: $workKind) {
-                ForEach(WorkKind.allCases) { kind in
-                    Text(kind.title).tag(kind)
+            HStack(spacing: 12) {
+                Picker("Kind", selection: $workKind) {
+                    ForEach(WorkKind.allCases) { kind in
+                        Text(kind.title).tag(kind)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+                .pickerStyle(.segmented)
+                .labelsHidden()
 
-            if sessions.isEmpty {
-                Text("Log homework, a past paper or exam questions with marks and they will chart here.")
+                Picker("Group", selection: $markGrouping) {
+                    ForEach(MarkGrouping.allCases) { grouping in
+                        Text(grouping.title).tag(grouping)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 170)
+            }
+
+            if rows.isEmpty {
+                Text("Log homework, a past paper or exam questions with marks and the averages will appear here.")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
             } else {
-                Chart(sessions) { session in
-                    LineMark(
-                        x: .value("Date", session.date),
-                        y: .value("Mark %", session.percentage ?? 0)
-                    )
-                    .foregroundStyle(by: .value("Subject", session.subject?.shortName ?? "Other"))
-                    PointMark(
-                        x: .value("Date", session.date),
-                        y: .value("Mark %", session.percentage ?? 0)
-                    )
-                    .foregroundStyle(by: .value("Subject", session.subject?.shortName ?? "Other"))
-                }
-                .chartYScale(domain: 0...100)
-                .frame(height: 200)
+                MarksAverageChart(rows: rows)
 
                 HStack(spacing: 18) {
                     workStat("Pieces", "\(aggregate.sessions)")
@@ -212,6 +231,15 @@ struct ExamsView: View {
         store.state.recentSessions
             .filter { $0.percentage != nil && workKind.matches($0) }
             .sorted { $0.date < $1.date }
+    }
+
+    /// Pools the filtered pieces with the shared grouping, so this tab and the Subjects tab
+    /// always agree on the numbers.
+    private var averageRows: [MarksAverageRow] {
+        switch markGrouping {
+        case .subject: MarksAverages.bySubject(workSessions)
+        case .topic: MarksAverages.byTopic(workSessions)
+        }
     }
 
     private func workStat(_ label: String, _ value: String) -> some View {

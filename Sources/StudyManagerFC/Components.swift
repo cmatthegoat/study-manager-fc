@@ -97,20 +97,24 @@ struct MiniPlayerCard: View {
             if let player {
                 ZStack {
                     Circle()
-                        .fill(player.rarity.accentColor.opacity(0.24))
+                        .fill(player.rarity.accentColor.opacity(player.isInjured ? 0.12 : 0.24))
                     Circle()
-                        .stroke(player.rarity.accentColor.opacity(0.8), lineWidth: 1.5)
+                        .stroke(
+                            player.isInjured ? Color.red.opacity(0.9) : player.rarity.accentColor.opacity(0.8),
+                            lineWidth: 1.5
+                        )
                     Text("\(player.overall)")
                         .font(.system(size: 17, weight: .black, design: .rounded))
+                        .opacity(player.isInjured ? 0.5 : 1)
                 }
                 .frame(width: 43, height: 43)
                 Text(player.name.split(separator: " ").last.map(String.init) ?? player.name)
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text("POT \(player.potential)")
+                Text(player.isInjured ? "OUT \(player.matchesMissed)" : "POT \(player.potential)")
                     .font(.system(size: 7, weight: .bold, design: .rounded))
-                    .foregroundStyle(player.rarity.accentColor)
+                    .foregroundStyle(player.isInjured ? Color.red : player.rarity.accentColor)
                 Text(positionLabel)
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
@@ -140,8 +144,21 @@ struct MiniPlayerCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(.white.opacity(player == nil ? 0.16 : 0.23), lineWidth: 1)
+                .stroke(
+                    player?.isInjured == true ? Color.red.opacity(0.75) : .white.opacity(player == nil ? 0.16 : 0.23),
+                    lineWidth: player?.isInjured == true ? 1.5 : 1
+                )
         )
+        .overlay(alignment: .topTrailing) {
+            if player?.isInjured == true {
+                Image(systemName: "cross.case.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(3)
+                    .background(Color.red, in: Circle())
+                    .offset(x: 5, y: -5)
+            }
+        }
     }
 }
 
@@ -195,6 +212,7 @@ struct PitchMarkings: View {
 
 struct LineupPitchView: View {
     let lineup: [String: Player]
+    var slots: [LineupSlot] = LineupSlot.all
     let onSelectSlot: (LineupSlot) -> Void
 
     var body: some View {
@@ -209,7 +227,7 @@ struct LineupPitchView: View {
                         )
                     )
                 PitchMarkings()
-                ForEach(LineupSlot.all) { slot in
+                ForEach(slots) { slot in
                     Button {
                         onSelectSlot(slot)
                     } label: {
@@ -301,6 +319,8 @@ struct MatchReportSheet: View {
     @Environment(\.dismiss) private var dismiss
     let report: MatchReport
     var userClubID: String?
+    /// Fitness changes caused by this match. Empty for reports opened from history.
+    var injuries: [InjuryUpdate] = []
 
     private var home: Club? { ClubDatabase.club(for: report.homeClubID) }
     private var away: Club? { ClubDatabase.club(for: report.awayClubID) }
@@ -370,6 +390,10 @@ struct MatchReportSheet: View {
                     HStack(spacing: 18) {
                         ratingBlock(label: "Home rating", value: report.homeRating, club: home)
                         ratingBlock(label: "Away rating", value: report.awayRating, club: away)
+                    }
+
+                    if !injuries.isEmpty {
+                        injuryCard
                     }
                 }
                 .padding(.horizontal, 24)
@@ -462,6 +486,40 @@ struct MatchReportSheet: View {
             Spacer()
         }
         .surface(padding: 12, cornerRadius: 14)
+    }
+
+    /// Who went down in this match, and who is back. Previously the only way to find out was
+    /// to open the squad and look, which left the next matchday a guess.
+    private var injuryCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                title: "Injury Report",
+                subtitle: "\(injuries.filter { !$0.isRecovery }.count) out · \(injuries.filter(\.isRecovery).count) back",
+                symbol: "cross.case.fill"
+            )
+            ForEach(injuries) { update in
+                HStack(spacing: 10) {
+                    Image(systemName: update.isRecovery ? "checkmark.circle.fill" : "bandage.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(update.isRecovery ? Color.studyGreen : Color.red)
+                        .frame(width: 20)
+                    Text(update.playerName)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    Spacer()
+                    Pill(
+                        text: update.isRecovery ? "FIT AGAIN" : "OUT \(update.matchesOut) MATCH\(update.matchesOut == 1 ? "" : "ES")",
+                        color: update.isRecovery ? .studyGreen : .red,
+                        icon: update.isRecovery ? "arrow.up.circle.fill" : "cross.fill"
+                    )
+                }
+            }
+            if injuries.contains(where: { !$0.isRecovery }) {
+                Text("Replace injured starters in the Squad tab before the next matchday.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .surface(padding: 16)
     }
 }
 
@@ -578,5 +636,179 @@ struct ClubSelectionCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Styled dropdown
+
+/// One row in a `BentoMenu`.
+struct BentoOption<Value: Hashable>: Identifiable {
+    let id: Value
+    let title: String
+    var subtitle: String?
+    var symbol: String?
+
+    init(_ title: String, value: Value, subtitle: String? = nil, symbol: String? = nil) {
+        self.id = value
+        self.title = title
+        self.subtitle = subtitle
+        self.symbol = symbol
+    }
+}
+
+/// The app's dropdown. A rounded, outlined trigger showing the current value with a chevron,
+/// and a floating card of options where the selected row is tinted and ticked, the hovered row
+/// lifts slightly, and everything is drawn in the club palette.
+struct BentoMenu<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [BentoOption<Value>]
+    var placeholder: String = "Select"
+    /// Fixed trigger width. The card never gets narrower than 210pt.
+    var width: CGFloat? = nil
+    var isEnabled: Bool = true
+
+    @State private var isOpen = false
+    @State private var hovered: Value?
+
+    private var current: BentoOption<Value>? {
+        options.first { $0.id == selection }
+    }
+
+    private var cardWidth: CGFloat {
+        max(width ?? 220, 210)
+    }
+
+    var body: some View {
+        Button {
+            guard isEnabled else { return }
+            isOpen.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                if let symbol = current?.symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.studyGreen)
+                }
+                Text(current?.title ?? placeholder)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 6)
+                Image(systemName: isOpen ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(isOpen ? Color.studyGreen : Color.secondary)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .frame(width: width, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(Color.primary.opacity(isOpen ? 0.09 : 0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(
+                        isOpen ? Color.studyGreen.opacity(0.7) : Color.primary.opacity(0.13),
+                        lineWidth: isOpen ? 1.5 : 1
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .popover(isPresented: $isOpen, arrowEdge: .bottom) {
+            card
+                .presentationBackground(.clear)
+        }
+    }
+
+    private var card: some View {
+        ScrollView(showsIndicators: true) {
+            VStack(spacing: 2) {
+                if options.isEmpty {
+                    Text("No options")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 8)
+                }
+                ForEach(options) { option in
+                    row(option)
+                }
+            }
+            .padding(7)
+        }
+        .frame(width: cardWidth)
+        .frame(maxHeight: 300)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(white: 0.09).opacity(0.97))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.13), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.5), radius: 16, x: 0, y: 10)
+        .padding(12)
+    }
+
+    private func row(_ option: BentoOption<Value>) -> some View {
+        let isSelected = option.id == selection
+        let isHovered = hovered == option.id
+
+        return Button {
+            selection = option.id
+            isOpen = false
+        } label: {
+            HStack(spacing: 8) {
+                if let symbol = option.symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 12)
+                        .foregroundStyle(isSelected ? Color.studyGreen : Color.secondary)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(option.title)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let subtitle = option.subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.system(size: 8.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundStyle(Color.studyGreen)
+                }
+            }
+            .foregroundStyle(isSelected ? Color.studyGreen : Color.primary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(
+                        isSelected
+                            ? Color.studyGreen.opacity(0.18)
+                            : (isHovered ? Color.white.opacity(0.06) : Color.clear)
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                hovered = option.id
+            } else if hovered == option.id {
+                hovered = nil
+            }
+        }
     }
 }

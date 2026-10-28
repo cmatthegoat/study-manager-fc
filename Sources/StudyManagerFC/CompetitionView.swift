@@ -3,6 +3,7 @@ import SwiftUI
 struct CompetitionView: View {
     @Environment(AppStore.self) private var store
     @State private var report: MatchReport?
+    @State private var reportInjuries: [InjuryUpdate] = []
     @State private var errorMessage: String?
 
     private var season: SeasonState? { store.season }
@@ -18,11 +19,11 @@ struct CompetitionView: View {
                 }
                 standingsCard
                 scoringLeaderboardCard
-                if !store.latestReports.isEmpty {
-                    resultsCard
-                }
                 if !store.trophies.isEmpty {
                     trophyCard
+                }
+                if !store.latestReports.isEmpty {
+                    resultsCard
                 }
             }
             .padding(28)
@@ -30,8 +31,12 @@ struct CompetitionView: View {
             .frame(maxWidth: .infinity)
         }
         .sheet(item: $report) { matchReport in
-            MatchReportSheet(report: matchReport, userClubID: store.state.managedClubID)
-                .environment(store)
+            MatchReportSheet(
+                report: matchReport,
+                userClubID: store.state.managedClubID,
+                injuries: reportInjuries
+            )
+            .environment(store)
         }
         .alert("Could Not Simulate", isPresented: Binding(
             get: { errorMessage != nil },
@@ -128,7 +133,7 @@ struct CompetitionView: View {
                     icon: store.lineupIsComplete ? "checkmark" : "exclamationmark"
                 )
                 Pill(
-                    text: "\(store.squadMetrics.overall) OVR · \(store.squadMetrics.chemistry) CHEM",
+                    text: "\(store.squadMetrics.overall) OVR",
                     color: .studyTeal,
                     icon: "chart.bar"
                 )
@@ -448,61 +453,144 @@ struct CompetitionView: View {
     }
 
     private var scoringLeaderboardCard: some View {
-        let rows = Array(
-            store.state.scoringLedger
-                .sorted {
-                    let left = $0.goals + $0.assists
-                    let right = $1.goals + $1.assists
-                    if left != right { return left > right }
-                    return $0.goals > $1.goals
-                }
-                .prefix(15)
-        )
+        let seasonRows = Array(store.state.seasonScoringLedger.sorted(by: Self.ledgerOrder).prefix(15))
+        let careerRows = Array(store.state.scoringLedger.sorted(by: Self.ledgerOrder).prefix(10))
+        let bonusByName = bonusStandingByName()
         return VStack(alignment: .leading, spacing: 12) {
             SectionHeader(
                 title: "Goals & Assists",
-                subtitle: "Every simulated match across all seasons, combined into one leaderboard",
+                subtitle: "This season's campaign on top, every season combined underneath",
                 symbol: "soccerball"
             )
-            if rows.isEmpty {
-                Text("No goals have been scored yet. Simulate a matchday to start the leaderboard.")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
+            // The season block is always present so the current campaign is never mistaken
+            // for an empty one: it simply says so until the first matchday is simulated.
+            ledgerLabel("SEASON \(store.state.seasonNumber)", tint: .studyGreen)
+            if seasonRows.isEmpty {
+                Text("No matches simulated this season yet. Goals and assists appear here as soon as the first matchday is played.")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
             } else {
-                HStack(spacing: 10) {
-                    Text("#").frame(width: 28, alignment: .leading)
-                    Text("Player").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("G").frame(width: 44, alignment: .trailing)
-                    Text("A").frame(width: 44, alignment: .trailing)
-                    Text("G+A").frame(width: 52, alignment: .trailing)
+                ledgerHeader(showsRace: true)
+                ForEach(Array(seasonRows.enumerated()), id: \.element) { index, record in
+                    ledgerRow(
+                        index: index,
+                        record: record,
+                        showsRace: true,
+                        bonus: record.clubID == (store.state.managedClubID ?? "") ? bonusByName[record.name] : nil
+                    )
                 }
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(.secondary)
-                ForEach(Array(rows.enumerated()), id: \.element) { index, record in
-                    HStack(spacing: 10) {
-                        Text("\(index + 1)")
-                            .frame(width: 28, alignment: .leading)
-                            .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(record.name)
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            Text(ClubDatabase.club(for: record.clubID)?.shortName ?? "")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("\(record.goals)").frame(width: 44, alignment: .trailing)
-                        Text("\(record.assists)").frame(width: 44, alignment: .trailing)
-                        Text("\(record.goals + record.assists)")
-                            .fontWeight(.bold)
-                            .frame(width: 52, alignment: .trailing)
-                    }
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                Text("The bonus race counts your starters' goals and assists this season; keepers are judged on clean sheets. Whoever beats his position's share is rewarded at the roll-over.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+            }
+            if !careerRows.isEmpty {
+                ledgerLabel("ALL TIME", tint: .studyGold)
+                    .padding(.top, seasonRows.isEmpty ? 10 : 14)
+                ledgerHeader(showsRace: false)
+                ForEach(Array(careerRows.enumerated()), id: \.element) { index, record in
+                    ledgerRow(index: index, record: record, showsRace: false, bonus: nil)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .surface(padding: 18)
+    }
+
+    private static func ledgerOrder(_ left: PlayerScoringRecord, _ right: PlayerScoringRecord) -> Bool {
+        let leftTotal = left.goals + left.assists
+        let rightTotal = right.goals + right.assists
+        if leftTotal != rightTotal { return leftTotal > rightTotal }
+        return left.goals > right.goals
+    }
+
+    /// The bonus race for the user's own starters, keyed by name so it lines up with the ledger.
+    private func bonusStandingByName() -> [String: SeasonBonusStatus] {
+        guard let season = store.state.season, let clubID = store.state.managedClubID else { return [:] }
+        let standing = SeasonPerformance.standing(
+            players: store.state.players,
+            lineup: store.state.lineup,
+            reports: season.reports,
+            clubID: clubID
+        )
+        guard !standing.isEmpty else { return [:] }
+        var byName: [String: SeasonBonusStatus] = [:]
+        for player in store.state.players {
+            if let status = standing[player.id] {
+                byName[player.name] = status
+            }
+        }
+        return byName
+    }
+
+    private func ledgerLabel(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .black, design: .rounded))
+            .tracking(1.4)
+            .foregroundStyle(tint)
+    }
+
+    private func ledgerHeader(showsRace: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text("#").frame(width: 24, alignment: .leading)
+            Text("Player").frame(maxWidth: .infinity, alignment: .leading)
+            Text("G").frame(width: 30, alignment: .trailing)
+            Text("A").frame(width: 30, alignment: .trailing)
+            Text("G+A").frame(width: 40, alignment: .trailing)
+            if showsRace {
+                Text("BONUS").frame(width: 62, alignment: .trailing)
+            }
+        }
+        .font(.system(size: 10, weight: .bold, design: .rounded))
+        .foregroundStyle(.secondary)
+    }
+
+    private func ledgerRow(
+        index: Int,
+        record: PlayerScoringRecord,
+        showsRace: Bool,
+        bonus: SeasonBonusStatus?
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text("\(index + 1)")
+                .frame(width: 24, alignment: .leading)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(record.name)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                Text(ClubDatabase.club(for: record.clubID)?.shortName ?? "")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("\(record.goals)").frame(width: 30, alignment: .trailing)
+            Text("\(record.assists)").frame(width: 30, alignment: .trailing)
+            Text("\(record.goals + record.assists)")
+                .fontWeight(.bold)
+                .frame(width: 40, alignment: .trailing)
+            if showsRace {
+                bonusTag(bonus)
+                    .frame(width: 62, alignment: .trailing)
+            }
+        }
+        .font(.system(size: 13, weight: .medium, design: .rounded))
+        .monospacedDigit()
+    }
+
+    @ViewBuilder
+    private func bonusTag(_ status: SeasonBonusStatus?) -> some View {
+        if let status {
+            if status.qualified {
+                Text("EARNED")
+                    .font(.system(size: 8, weight: .black, design: .rounded))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.studyGold)
+            } else {
+                Text("\(status.produced)/\(status.required)")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var resultsCard: some View {
@@ -598,6 +686,7 @@ struct CompetitionView: View {
         do {
             let outcome = try store.simulateCurrentStage()
             if let userReport = outcome.userReport {
+                reportInjuries = outcome.injuries
                 report = userReport
             }
         } catch {

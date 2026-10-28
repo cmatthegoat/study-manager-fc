@@ -311,11 +311,14 @@ enum PlayerFactory {
         return "\(first) \(last)"
     }
 
-    static func autoLineup(players: [Player]) -> ([String: UUID], [UUID]) {
+    static func autoLineup(
+        players: [Player],
+        formation: Formation = .f433
+    ) -> ([String: UUID], [UUID]) {
         var used = Set<UUID>()
         var lineup: [String: UUID] = [:]
 
-        for slot in LineupSlot.all {
+        for slot in formation.slots {
             let candidate = players
                 .filter { !used.contains($0.id) }
                 .max { lhs, rhs in
@@ -488,5 +491,17 @@ extension PlayerFactory {
             let name = record.disambiguatedName(in: records, database: database)
             return player(from: record, name: name, season: season)
         }
+    }
+
+    /// The rating a club plays at: the eleven it can actually field from its imported squad,
+    /// scored the same way the user's XI is. Every man is placed in the slot he fits, so a
+    /// winger at right back is docked for it exactly as he would be in the Squad tab.
+    /// Nil when the database has too few players for that club to field an eleven.
+    static func bestXIRating(for clubID: String) -> Int? {
+        let squad = databaseSquad(for: clubID, season: 1, limit: 26)
+        guard squad.count >= 11 else { return nil }
+        let lineup = autoLineup(players: squad)
+        let metrics = SquadMetrics.calculate(lineup: lineup.0, players: squad)
+        return metrics.overall > 0 ? metrics.overall : nil
     }
 }
