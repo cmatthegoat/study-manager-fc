@@ -1572,6 +1572,9 @@ struct GameState: Codable {
     var scoringLedger: [PlayerScoringRecord] = []
     /// Offers from other clubs for players you have listed. Kept until accepted, declined or the player leaves.
     var transferOffers: [TransferOffer] = []
+    /// Tasks ticked off and cleared from the board, kept as a lifetime tally because the
+    /// completed task itself is deleted once its reward has been paid.
+    var tasksCompleted: Int = 0
     /// Youth academy level from 1 (poor intake) to `GameRules.maxAcademyLevel` (elite intake).
     var academyLevel: Int = 1
     /// Competitive matches played since the last academy intake.
@@ -1612,6 +1615,7 @@ struct GameState: Codable {
         case lastTransition
         case scoringLedger
         case transferOffers
+        case tasksCompleted
         case academyLevel
         case matchesSinceAcademyIntake
         case assessments
@@ -1692,6 +1696,7 @@ extension GameState {
         todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos) ?? []
         scoringLedger = try container.decodeIfPresent([PlayerScoringRecord].self, forKey: .scoringLedger) ?? []
         transferOffers = try container.decodeIfPresent([TransferOffer].self, forKey: .transferOffers) ?? []
+        tasksCompleted = try container.decodeIfPresent(Int.self, forKey: .tasksCompleted) ?? 0
         academyLevel = try container.decodeIfPresent(Int.self, forKey: .academyLevel) ?? 1
         matchesSinceAcademyIntake = try container.decodeIfPresent(Int.self, forKey: .matchesSinceAcademyIntake) ?? 0
         assessments = try container.decodeIfPresent([Assessment].self, forKey: .assessments) ?? []

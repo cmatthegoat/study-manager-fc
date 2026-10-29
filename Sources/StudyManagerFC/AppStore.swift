@@ -113,7 +113,19 @@ final class AppStore {
             saveErrorMessage = "The previous save could not be read. A fresh career was created and the old file was preserved."
         }
         migrateLegacySaveIfNeeded()
+        purgeCompletedTodos()
         TeamTheme.club = managedClub
+    }
+
+    /// Tasks used to stay on the board once ticked. They are now cleared on completion, so any
+    /// already-ticked tasks in an existing career are removed once and counted in the tally.
+    private func purgeCompletedTodos() {
+        let finished = state.todos.filter(\.isCompleted)
+        guard !finished.isEmpty else { return }
+        var draft = state
+        draft.todos.removeAll(where: \.isCompleted)
+        draft.tasksCompleted += finished.count
+        commit(draft)
     }
 
     /// Prints whether the saved career on disk can be decoded by the current models.
@@ -176,17 +188,37 @@ final class AppStore {
             let expectedReward = Int((Double(GameRules.clubCashPerTodo) * StudySubject.ext1Maths.cashMultiplier).rounded())
             let todoID = app.state.todos[0].id
 
-            app.toggleTodo(todoID)
-            guard app.state.todos[0].isCompleted, app.state.todos[0].rewardAwarded, app.state.clubCash == startingCash + expectedReward else {
-                print("SELF TEST FAIL: completing a todo did not pay \(expectedReward) cash")
+            // Completing pays the cash first, then clears the task off the board.
+            let paid = app.completeTodo(todoID)
+            guard paid == expectedReward,
+                  app.state.clubCash == startingCash + expectedReward,
+                  app.state.todos.isEmpty,
+                  app.state.tasksCompleted == 1 else {
+                print("SELF TEST FAIL: completing a todo did not pay \(expectedReward) cash and clear it")
                 exit(1)
             }
 
-            // Re-toggling must not pay the reward twice.
-            app.toggleTodo(todoID)
-            app.toggleTodo(todoID)
-            guard app.state.clubCash == startingCash + expectedReward else {
+            // A second completion of the same task must not pay again.
+            guard app.completeTodo(todoID) == nil,
+                  app.state.clubCash == startingCash + expectedReward,
+                  app.state.tasksCompleted == 1 else {
                 print("SELF TEST FAIL: todo reward could be farmed")
+                exit(1)
+            }
+
+            // A task ticked in an older career is cleared on load and still counted.
+            var legacyTodos = state
+            legacyTodos.todos = [
+                TodoItem(id: UUID(), title: "Old tick", subject: .physics, isCompleted: true, createdAt: Date(), dueDate: nil, rewardAwarded: true),
+                TodoItem(id: UUID(), title: "Still open", subject: .physics, isCompleted: false, createdAt: Date(), dueDate: nil)
+            ]
+            let legacyTodoStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("todos", isDirectory: true))
+            try legacyTodoStore.save(legacyTodos)
+            let legacyApp = AppStore(persistence: legacyTodoStore)
+            guard legacyApp.state.todos.count == 1,
+                  legacyApp.state.todos[0].title == "Still open",
+                  legacyApp.state.tasksCompleted == 1 else {
+                print("SELF TEST FAIL: a ticked task from an older save was not cleared")
                 exit(1)
             }
 
@@ -218,8 +250,9 @@ final class AppStore {
 
             app.deleteStudySession(session.id)
             guard let reloaded = try store.load(),
-                  reloaded.todos.count == 4,
-                  reloaded.todos.contains(where: { $0.id == todoID && $0.isCompleted }),
+                  reloaded.todos.count == 3,
+                  !reloaded.todos.contains(where: { $0.id == todoID }),
+                  reloaded.tasksCompleted == 1,
                   reloaded.todos.contains(where: { $0.priority == 1 && $0.subtopicName == "Waves" }),
                   reloaded.subtopics.contains(where: { $0.name == "Waves" }),
                   reloaded.recentSessions.isEmpty,
@@ -676,7 +709,7 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward (no double-pay), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, injury report + recovery, marking JSON parsing, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, timer sessions filed only after review")
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, injury report + recovery, marking JSON parsing, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, timer sessions filed only after review")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -1449,17 +1482,23 @@ final class AppStore {
         Int((Double(GameRules.clubCashPerTodo) * subject.cashMultiplier).rounded())
     }
 
-    func toggleTodo(_ id: UUID) {
-        guard let index = state.todos.firstIndex(where: { $0.id == id }) else { return }
+    /// Ticks a task off: pays its Club Cash and then removes it from the board, so a
+    /// finished task leaves nothing behind. Returns the cash paid, or nil when the task
+    /// was already gone.
+    @discardableResult
+    func completeTodo(_ id: UUID) -> Int? {
+        guard let todo = state.todos.first(where: { $0.id == id }) else { return nil }
         var draft = state
-        draft.todos[index].isCompleted.toggle()
-        // The reward is paid once per task: un-ticking does not take it back and
-        // re-ticking does not pay it again.
-        if draft.todos[index].isCompleted, !draft.todos[index].rewardAwarded {
-            draft.clubCash += todoReward(for: draft.todos[index].subject ?? .other)
-            draft.todos[index].rewardAwarded = true
+        var paid = 0
+        // Older tasks could be ticked and unticked; the reward is still only ever paid once.
+        if !todo.rewardAwarded {
+            paid = todoReward(for: todo.subject ?? .other)
+            draft.clubCash += paid
         }
+        draft.todos.removeAll { $0.id == id }
+        draft.tasksCompleted += 1
         commit(draft)
+        return paid
     }
 
     /// Points the timer at an open todo and takes its subject and topic, so the logged work lands there.

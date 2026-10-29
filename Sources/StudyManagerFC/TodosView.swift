@@ -17,8 +17,10 @@ struct TodosView: View {
         store.todos.filter { !$0.isCompleted }.count
     }
 
+    /// Lifetime tally: a ticked task pays out and is then removed from the board, so the
+    /// count of cleared tasks lives on the career rather than in the list.
     private var doneCount: Int {
-        store.todos.filter(\.isCompleted).count
+        store.state.tasksCompleted
     }
 
     private var subjectsWithTodos: Int {
@@ -53,7 +55,7 @@ struct TodosView: View {
                 ScreenHeader(
                     eyebrow: "Todo List",
                     title: "Every Task, Filed by Subject",
-                    subtitle: "Keep everything you need to do in one place. Each task belongs to a subject and can be tied to one of that subject's topics, so nothing gets lost between modules — and ticking one off pays Club Cash scaled by that subject's multiplier."
+                    subtitle: "Keep everything you need to do in one place. Each task belongs to a subject and can be tied to one of that subject's topics — and ticking one off pays Club Cash scaled by that subject's multiplier, then clears the task from the board."
                 )
 
                 overview
@@ -94,9 +96,9 @@ struct TodosView: View {
                 tint: .studyGold
             )
             MetricTile(
-                title: "Completed",
+                title: "Cleared",
                 value: "\(doneCount)",
-                subtitle: "Ticked off so far",
+                subtitle: "Ticked off all time",
                 symbol: "checkmark.seal.fill",
                 tint: .studyGreen
             )

@@ -343,39 +343,21 @@ struct TodoItemRow: View {
     @Environment(AppStore.self) private var store
     let todo: TodoItem
     @State private var isShowingDetail = false
-    
+
+    /// Ticking a task pays it and then wipes it off the board, so the row plays a short
+    /// completion flourish before it is deleted.
+    @State private var isCompleting = false
+    @State private var burst = false
+    @State private var popped = false
+
+    private var reward: Int {
+        store.todoReward(for: todo.subject ?? .other)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Button {
-                store.toggleTodo(todo.id)
-            } label: {
-                Image(systemName: todo.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(todo.isCompleted ? Color.studyGreen : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(todo.isCompleted ? "Mark as not done" : "Mark as done")
-            
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    if let priority = todo.priority {
-                        PriorityBadge(priority: priority)
-                    }
-                    Text(todo.title)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .strikethrough(todo.isCompleted, color: .secondary)
-                        .foregroundStyle(todo.isCompleted ? Color.secondary : Color.primary)
-                        .lineLimit(2)
-                }
-                if let subtopic = todo.subtopicName {
-                    Text(subtopic)
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.primary.opacity(0.06), in: Capsule())
-                }
-            }
+            tick
+            details
             Spacer(minLength: 4)
             Button(action: { store.deleteTodo(todo.id) }) {
                 Image(systemName: "trash")
@@ -385,17 +367,114 @@ struct TodoItemRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Delete \(todo.title)")
+            .help("Delete \(todo.title) without earning its reward")
+            .opacity(isCompleting ? 0 : 1)
         }
+        // The row clears away while the earned cash floats up on its own layer, so the
+        // reward stays readable after the task itself has gone.
+        .opacity(isCompleting ? 0 : 1)
+        .offset(x: isCompleting ? 26 : 0)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.primary.opacity(todo.isCompleted ? 0.015 : 0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(alignment: .trailing) {
+            if isCompleting {
+                Text("+\(reward) CASH")
+                    .font(.system(size: 9, weight: .black, design: .rounded))
+                    .tracking(0.5)
+                    .foregroundStyle(Color.studyGold)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.studyGold.opacity(0.16), in: Capsule())
+                    .overlay(Capsule().stroke(Color.studyGold.opacity(0.45), lineWidth: 0.5))
+                    .shadow(color: Color.studyGold.opacity(0.55), radius: 7)
+                    .offset(y: -14)
+                    .transition(.offset(y: 12).combined(with: .opacity).combined(with: .scale(scale: 0.6)))
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.studyGreen.opacity(isCompleting ? 0.55 : 0), lineWidth: 1)
+        )
         .contentShape(Rectangle())
-        .onTapGesture { isShowingDetail = true }
-        .help("Edit task")
+        .onTapGesture {
+            guard !isCompleting else { return }
+            isShowingDetail = true
+        }
+        .help(isCompleting ? "Task complete" : "Edit task")
+        .allowsHitTesting(!isCompleting)
         .sheet(isPresented: $isShowingDetail) {
             TodoDetailSheet(todoID: todo.id)
                 .environment(store)
+        }
+    }
+
+    private var rowBackground: Color {
+        if isCompleting { return Color.studyGreen.opacity(0.12) }
+        return Color.primary.opacity(todo.isCompleted ? 0.015 : 0.03)
+    }
+
+    private var tick: some View {
+        Button(action: complete) {
+            ZStack {
+                Image(systemName: isCompleting || todo.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isCompleting || todo.isCompleted ? Color.studyGreen : Color.secondary)
+                    .scaleEffect(popped ? 1.2 : 1)
+                    .shadow(color: Color.studyGreen.opacity(isCompleting ? 0.8 : 0), radius: 8)
+
+                // A single ring expands out of the tick as the task is cleared.
+                Circle()
+                    .stroke(Color.studyGreen, lineWidth: 1.5)
+                    .frame(width: 18, height: 18)
+                    .scaleEffect(burst ? 2.4 : 0.6)
+                    .opacity(burst ? 0 : 0.9)
+            }
+            .frame(width: 20, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(todo.isCompleted ? "Task complete" : "Mark as done — pays \(reward) cash")
+        .disabled(isCompleting)
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                if let priority = todo.priority {
+                    PriorityBadge(priority: priority)
+                }
+                Text(todo.title)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .strikethrough(todo.isCompleted || isCompleting, color: .secondary)
+                    .foregroundStyle(todo.isCompleted ? Color.secondary : Color.primary)
+                    .lineLimit(2)
+            }
+            if let subtopic = todo.subtopicName {
+                Text(subtopic)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+            }
+        }
+    }
+
+    private func complete() {
+        guard !isCompleting else { return }
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.55)) {
+            popped = true
+            burst = true
+            isCompleting = true
+        }
+        // Let the flourish read, then hand over to the store, which pays and deletes the task.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 620_000_000)
+            withAnimation(.easeInOut(duration: 0.3)) {
+                _ = store.completeTodo(todo.id)
+            }
         }
     }
 }
