@@ -115,6 +115,36 @@ final class AppStore {
         migrateLegacySaveIfNeeded()
         purgeCompletedTodos()
         TeamTheme.club = managedClub
+        SubjectTheme.apply(state.subjectColors)
+    }
+
+    /// The colour a subject is drawn in, falling back to its default until it is customised.
+    func subjectColorHex(_ subject: StudySubject) -> String {
+        SubjectTheme.hex(for: subject)
+    }
+
+    func setSubjectColor(_ hex: String, for subject: StudySubject) {
+        guard let cleaned = Self.normalisedHex(hex) else { return }
+        var draft = state
+        draft.subjectColors[subject.rawValue] = cleaned
+        commit(draft)
+    }
+
+    /// Hands a subject back to the default palette.
+    func resetSubjectColor(for subject: StudySubject) {
+        guard state.subjectColors[subject.rawValue] != nil else { return }
+        var draft = state
+        draft.subjectColors.removeValue(forKey: subject.rawValue)
+        commit(draft)
+    }
+
+    /// Accepts `#RRGGBB`, `RRGGBB` or `RRGGBBAA` from the colour well and stores the six-digit
+    /// form, so the saved palette stays one predictable shape.
+    private static func normalisedHex(_ hex: String) -> String? {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted).uppercased()
+        guard cleaned.count == 6 || cleaned.count == 8,
+              cleaned.allSatisfy(\.isHexDigit) else { return nil }
+        return String(cleaned.prefix(6))
     }
 
     /// Tasks used to stay on the board once ticked. They are now cleared on completion, so any
@@ -219,6 +249,26 @@ final class AppStore {
                   legacyApp.state.todos[0].title == "Still open",
                   legacyApp.state.tasksCompleted == 1 else {
                 print("SELF TEST FAIL: a ticked task from an older save was not cleared")
+                exit(1)
+            }
+
+            // Subject colours are saved per subject, ignore malformed values, and reset.
+            let defaultPhysics = SubjectTheme.hex(for: .physics)
+            app.setSubjectColor("#ff00aa", for: .physics)
+            guard app.state.subjectColors["physics"] == "FF00AA",
+                  SubjectTheme.hex(for: .physics) == "FF00AA" else {
+                print("SELF TEST FAIL: a subject colour did not save")
+                exit(1)
+            }
+            app.setSubjectColor("nonsense", for: .physics)
+            guard SubjectTheme.hex(for: .physics) == "FF00AA" else {
+                print("SELF TEST FAIL: a malformed colour overwrote the subject colour")
+                exit(1)
+            }
+            app.resetSubjectColor(for: .physics)
+            guard app.state.subjectColors["physics"] == nil,
+                  SubjectTheme.hex(for: .physics) == defaultPhysics else {
+                print("SELF TEST FAIL: resetting a subject colour did not restore the default")
                 exit(1)
             }
 
@@ -709,7 +759,7 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, injury report + recovery, marking JSON parsing, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, timer sessions filed only after review")
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, timer sessions filed only after review")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -2272,6 +2322,7 @@ final class AppStore {
         // The palette follows the managed club, so it is set before the new state is
         // published and every view redraws in the club's colours.
         TeamTheme.club = ClubDatabase.club(for: draft.managedClubID)
+        SubjectTheme.apply(draft.subjectColors)
         state = draft
         do {
             try persistence.save(draft)

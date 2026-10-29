@@ -149,7 +149,7 @@ struct TodosView: View {
                     icon: "banknote"
                 )
                 if let subject = preview.subject {
-                    Pill(text: subject.shortName, color: .studyTeal, icon: "number")
+                    Pill(text: subject.shortName, color: SubjectTheme.color(for: subject), icon: "number")
                 }
                 if let topic = preview.subtopicName {
                     Pill(text: topic, color: .studyTeal, icon: "tag")
@@ -177,6 +177,10 @@ struct TodosView: View {
                     color: .studyGold,
                     icon: "banknote"
                 )
+                Circle()
+                    .fill(SubjectTheme.color(for: subject))
+                    .frame(width: 7, height: 7)
+                    .shadow(color: SubjectTheme.color(for: subject).opacity(0.7), radius: 4)
             }
             ForEach(items) { todo in
                 if isEditing && editingTodoID == todo.id {

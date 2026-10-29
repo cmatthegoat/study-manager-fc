@@ -252,13 +252,18 @@ struct StudyLogView: View {
         .surface(padding: 16)
     }
 
+    /// A logged piece wears its subject's colour, so the log can be scanned by subject.
+    private func sessionTint(_ session: StudySession) -> Color {
+        session.subject.map { SubjectTheme.color(for: $0) } ?? Color.studyGreen
+    }
+
     private func row(_ session: StudySession) -> some View {
         HStack(spacing: 12) {
             Image(systemName: session.kind.systemImage)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.studyGreen)
+                .foregroundStyle(sessionTint(session))
                 .frame(width: 28, height: 28)
-                .background(Color.studyGreen.opacity(0.1), in: Circle())
+                .background(sessionTint(session).opacity(0.12), in: Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.title.isEmpty ? session.kind.title : session.title)

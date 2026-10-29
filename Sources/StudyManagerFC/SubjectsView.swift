@@ -55,7 +55,7 @@ struct SubjectsView: View {
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
             } else {
-                MarksAverageChart(rows: rows, perRowHeight: 32)
+                MarksAverageChart(rows: rows, perRowHeight: 32, usesSubjectColors: true)
                 HStack(spacing: 18) {
                     markStat("Pieces", "\(aggregate.sessions)")
                     markStat("Overall average", aggregate.averagePercentage.map { "\($0)%" } ?? "–")
@@ -137,9 +137,15 @@ struct SubjectCard: View {
     @State private var draftTopic = ""
     @State private var draftTodo = ""
     @State private var selectedSubtopicID: UUID?
-    
+    @State private var isPickingColor = false
+
     private var aggregate: StudyAggregate {
         store.aggregate(for: subject)
+    }
+
+    /// The player's chosen colour for this subject, or its default.
+    private var subjectColor: Color {
+        SubjectTheme.color(for: subject)
     }
     
     private var topics: [Subtopic] {
@@ -182,8 +188,30 @@ struct SubjectCard: View {
     var header: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(subject.displayName)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(subjectColor)
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
+                        .shadow(color: subjectColor.opacity(0.7), radius: 5)
+                    Text(subject.displayName)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    Button {
+                        isPickingColor = true
+                    } label: {
+                        Image(systemName: "paintpalette")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(subjectColor)
+                            .padding(3)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Change the colour for \(subject.displayName)")
+                    .popover(isPresented: $isPickingColor, arrowEdge: .bottom) {
+                        SubjectColorPicker(subject: subject)
+                            .environment(store)
+                    }
+                }
                 HStack(spacing: 6) {
                     Pill(text: "×\(multiplierText(subject.cashMultiplier)) cash", color: .studyGold, icon: "banknote")
                     Pill(text: "×\(multiplierText(subject.xpMultiplier)) XP", color: .studyTeal, icon: "bolt")

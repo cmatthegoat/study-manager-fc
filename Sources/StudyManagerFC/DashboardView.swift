@@ -100,10 +100,10 @@ private struct QuickTodoCard: View {
                     icon: "banknote"
                 )
                 if let subject = preview.subject {
-                    Pill(text: subject.shortName, color: .studyTeal, icon: "number")
+                    Pill(text: subject.shortName, color: SubjectTheme.color(for: subject), icon: "number")
                 }
                 if let topic = preview.subtopicName {
-                    Pill(text: topic, color: .studyTeal, icon: "tag")
+                    Pill(text: topic, color: SubjectTheme.color(for: preview.subject), icon: "tag")
                 }
                 if let priority = preview.priority {
                     PriorityBadge(priority: priority)

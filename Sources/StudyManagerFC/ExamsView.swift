@@ -165,6 +165,10 @@ struct ExamsView: View {
                     .foregroundStyle(by: .value("Subject", assessment.subject.shortName))
                 }
                 .chartYScale(domain: 0...100)
+                .chartForegroundStyleScale(
+                    domain: StudySubject.allCases.map(\.shortName),
+                    range: StudySubject.allCases.map { SubjectTheme.color(for: $0) }
+                )
                 .frame(height: 220)
             }
         }
@@ -212,7 +216,7 @@ struct ExamsView: View {
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
             } else {
-                MarksAverageChart(rows: rows)
+                MarksAverageChart(rows: rows, usesSubjectColors: markGrouping == .subject)
 
                 HStack(spacing: 18) {
                     workStat("Pieces", "\(aggregate.sessions)")
@@ -321,6 +325,7 @@ struct ExamsView: View {
                     }
                     Spacer()
                     Text(assessment.subject.shortName)
+                        .foregroundStyle(SubjectTheme.color(for: assessment.subject))
                     Text("\(assessment.marksObtained)/\(assessment.marksTotal)")
                     Text(assessment.percentage.map { "\($0)%" } ?? "–")
                         .fontWeight(.bold)

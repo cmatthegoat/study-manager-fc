@@ -9,6 +9,8 @@ struct MarksAverageRow: Identifiable, Hashable {
     let obtained: Int
     let total: Int
     let pieces: Int
+    /// The subject this row belongs to, so charts can colour it with that subject's colour.
+    var subject: StudySubject? = nil
 
     var percentage: Int {
         guard total > 0 else { return 0 }
@@ -23,7 +25,7 @@ enum MarksAverages {
     static func bySubject(_ sessions: [StudySession]) -> [MarksAverageRow] {
         pool(sessions) { session in
             let name = session.subject?.shortName ?? "Other"
-            return (key: name, label: name, subject: nil)
+            return (key: name, label: name, subject: session.subject)
         }
     }
 
@@ -34,7 +36,7 @@ enum MarksAverages {
             let topic = session.subtopicName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let name = topic.isEmpty ? "No topic" : topic
             let subject = session.subject?.shortName ?? "Other"
-            return (key: "\(subject)|\(name)", label: name, subject: subject)
+            return (key: "\(subject)|\(name)", label: name, subject: session.subject)
         }
         let labelCounts = Dictionary(grouping: rows, by: \.label).mapValues(\.count)
         rows = rows.map { row in
@@ -46,7 +48,8 @@ enum MarksAverages {
                 label: "\(row.label) · \(subject)",
                 obtained: row.obtained,
                 total: row.total,
-                pieces: row.pieces
+                pieces: row.pieces,
+                subject: row.subject
             )
         }
         return rows.sorted { $0.percentage < $1.percentage }
@@ -54,15 +57,15 @@ enum MarksAverages {
 
     private static func pool(
         _ sessions: [StudySession],
-        key: (StudySession) -> (key: String, label: String, subject: String?)
+        key: (StudySession) -> (key: String, label: String, subject: StudySubject?)
     ) -> [MarksAverageRow] {
-        var buckets: [String: (label: String, obtained: Int, total: Int, pieces: Int)] = [:]
+        var buckets: [String: (label: String, obtained: Int, total: Int, pieces: Int, subject: StudySubject?)] = [:]
         for session in sessions {
             guard let obtained = session.marksObtained,
                   let total = session.marksTotal,
                   total > 0 else { continue }
             let grouping = key(session)
-            var bucket = buckets[grouping.key] ?? (grouping.label, 0, 0, 0)
+            var bucket = buckets[grouping.key] ?? (grouping.label, 0, 0, 0, grouping.subject)
             bucket.obtained += obtained
             bucket.total += total
             bucket.pieces += 1
@@ -75,7 +78,8 @@ enum MarksAverages {
                     label: value.label,
                     obtained: value.obtained,
                     total: value.total,
-                    pieces: value.pieces
+                    pieces: value.pieces,
+                    subject: value.subject
                 )
             }
             // Weakest first so the chart draws the strongest group at the top.
@@ -83,12 +87,15 @@ enum MarksAverages {
     }
 }
 
-/// Horizontal bars of average percentage, one per subject or topic, coloured by grade band.
+/// Horizontal bars of average percentage, one per subject or topic. Bars are coloured by grade
+/// band, or — when the chart compares whole subjects — by each subject's own colour.
 struct MarksAverageChart: View {
     let rows: [MarksAverageRow]
     var perRowHeight: CGFloat = 30
     /// Adds the number of marked pieces after each percentage.
     var showsPieceCount = true
+    /// Draws each bar in its subject's colour instead of its grade colour.
+    var usesSubjectColors = false
 
     var body: some View {
         Chart(rows) { row in
@@ -96,7 +103,7 @@ struct MarksAverageChart: View {
                 x: .value("Average %", row.percentage),
                 y: .value("Group", row.label)
             )
-            .foregroundStyle(gradeColor(for: row.percentage).gradient)
+            .foregroundStyle(barColor(for: row).gradient)
             .cornerRadius(4)
             .annotation(position: .trailing, alignment: .leading) {
                 Text(showsPieceCount ? "\(row.percentage)% · \(row.pieces)" : "\(row.percentage)%")
@@ -124,5 +131,12 @@ struct MarksAverageChart: View {
             }
         }
         .frame(height: CGFloat(rows.count) * perRowHeight + 24)
+    }
+
+    private func barColor(for row: MarksAverageRow) -> Color {
+        guard usesSubjectColors, row.subject != nil else {
+            return gradeColor(for: row.percentage)
+        }
+        return SubjectTheme.color(for: row.subject)
     }
 }

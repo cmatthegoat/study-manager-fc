@@ -1575,6 +1575,9 @@ struct GameState: Codable {
     /// Tasks ticked off and cleared from the board, kept as a lifetime tally because the
     /// completed task itself is deleted once its reward has been paid.
     var tasksCompleted: Int = 0
+    /// Colour overrides per subject, keyed by the subject's raw value. Subjects absent here
+    /// use the default palette, so a missing key is never an error.
+    var subjectColors: [String: String] = [:]
     /// Youth academy level from 1 (poor intake) to `GameRules.maxAcademyLevel` (elite intake).
     var academyLevel: Int = 1
     /// Competitive matches played since the last academy intake.
@@ -1616,6 +1619,7 @@ struct GameState: Codable {
         case scoringLedger
         case transferOffers
         case tasksCompleted
+        case subjectColors
         case academyLevel
         case matchesSinceAcademyIntake
         case assessments
@@ -1697,6 +1701,7 @@ extension GameState {
         scoringLedger = try container.decodeIfPresent([PlayerScoringRecord].self, forKey: .scoringLedger) ?? []
         transferOffers = try container.decodeIfPresent([TransferOffer].self, forKey: .transferOffers) ?? []
         tasksCompleted = try container.decodeIfPresent(Int.self, forKey: .tasksCompleted) ?? 0
+        subjectColors = try container.decodeIfPresent([String: String].self, forKey: .subjectColors) ?? [:]
         academyLevel = try container.decodeIfPresent(Int.self, forKey: .academyLevel) ?? 1
         matchesSinceAcademyIntake = try container.decodeIfPresent(Int.self, forKey: .matchesSinceAcademyIntake) ?? 0
         assessments = try container.decodeIfPresent([Assessment].self, forKey: .assessments) ?? []
