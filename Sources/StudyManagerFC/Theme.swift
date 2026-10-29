@@ -222,49 +222,55 @@ extension PlayerRarity {
 }
 
 extension View {
-    /// A bento card: translucent dark fill over a material, a hairline edge and a diffuse
-    /// black shadow. Outer cards use the spec's 24–32pt radii.
+    /// A bento card. On macOS 26 this is Liquid Glass; older systems keep the translucent
+    /// material fill. Either way the card carries the same lit top edge and diffuse shadow.
     func surface(padding: CGFloat = 20, cornerRadius: CGFloat = 26) -> some View {
-        self
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
             .padding(padding)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(Color(hex: "12121A").opacity(0.7))
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background {
+                GlassBackdrop(cornerRadius: cornerRadius) {
+                    ZStack {
+                        shape.fill(Color(hex: "12121A").opacity(0.7))
+                        shape.fill(.ultraThinMaterial)
+                    }
                 }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            }
+            .clipShape(shape)
             .shadow(color: Color.black.opacity(0.5), radius: 15, x: 0, y: 8)
     }
 
+    /// The hero surface: glass tinted with the canvas accent, so the sign-in and club-picking
+    /// screens read as one lit panel rather than a painted rectangle.
     func elevatedSurface(padding: CGFloat = 20, cornerRadius: CGFloat = 30) -> some View {
-        self
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
             .padding(padding)
-            .background(
-                LinearGradient(
-                    colors: [Color.studyViolet.opacity(0.12), Color.white.opacity(0.03), Color.studyAmber.opacity(0.05)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            )
-            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background {
+                GlassBackdrop(cornerRadius: cornerRadius, tint: Color.studyViolet.opacity(0.20)) {
+                    ZStack {
+                        shape.fill(
+                            LinearGradient(
+                                colors: [Color.studyViolet.opacity(0.12), Color.white.opacity(0.03), Color.studyAmber.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        shape.fill(Color.white.opacity(0.03))
+                    }
+                }
+            }
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [Color.studyViolet.opacity(0.45), Color.white.opacity(0.06), Color.studyAmber.opacity(0.35)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
+                shape.stroke(
+                    LinearGradient(
+                        colors: [Color.studyViolet.opacity(0.45), Color.white.opacity(0.06), Color.studyAmber.opacity(0.35)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
             )
+            .clipShape(shape)
             .shadow(color: Color.black.opacity(0.5), radius: 15, x: 0, y: 8)
     }
 }

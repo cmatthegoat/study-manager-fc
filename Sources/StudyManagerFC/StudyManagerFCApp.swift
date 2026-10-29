@@ -160,15 +160,20 @@ struct MainTabView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // A floating glass command bar rather than a full-width strip with a rule under
+            // it: the sections, offers, change team and reset all live on one lit panel.
             HStack(spacing: 8) {
                 SectionSwitcher(selection: $selection)
                 TransferOffersButton()
                 changeTeamButton
                 resetButton
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            Divider()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .glassChrome(cornerRadius: 20)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -221,7 +226,7 @@ struct MainTabView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .foregroundStyle(.secondary)
-                .background(Color.primary.opacity(0.05), in: Capsule())
+                .glassChrome(cornerRadius: 999, interactive: true)
         }
         .buttonStyle(.plain)
         .help("Change club and start a new season")
@@ -237,7 +242,7 @@ struct MainTabView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .foregroundStyle(.secondary)
-                .background(Color.primary.opacity(0.05), in: Capsule())
+                .glassChrome(cornerRadius: 999, interactive: true)
         }
         .buttonStyle(.plain)
         .help("Reset all progress")
@@ -286,9 +291,10 @@ private struct SectionSwitcher: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .foregroundStyle(selection == section ? Color.studyGreen : Color.secondary)
-                    .background(
-                        selection == section ? Color.studyGreen.opacity(0.14) : Color.clear,
-                        in: Capsule()
+                    .glassChrome(
+                        cornerRadius: 999,
+                        tint: selection == section ? Color.studyGreen.opacity(0.35) : nil,
+                        interactive: selection == section
                     )
                     .contentShape(Capsule())
                 }

@@ -26,9 +26,10 @@ struct TransferOffersButton: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .foregroundStyle(offers.isEmpty ? Color.secondary : Color.studyGreen)
-            .background(
-                (offers.isEmpty ? Color.primary.opacity(0.05) : Color.studyGreen.opacity(0.14)),
-                in: Capsule()
+            .glassChrome(
+                cornerRadius: 999,
+                tint: offers.isEmpty ? nil : Color.studyGreen.opacity(0.35),
+                interactive: true
             )
         }
         .buttonStyle(.plain)
