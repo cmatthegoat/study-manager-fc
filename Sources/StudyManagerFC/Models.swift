@@ -2,6 +2,10 @@ import Foundation
 
 enum GameRules {
     static let clubCashPerMinute = 10
+    /// Every Club Cash payout is tuned through here: study sessions, tasks, assessments,
+    /// level-up bonuses and academy work all pass through `earnedCash`. Costs are untouched,
+    /// so a squad upgrade still costs the same while the income that funds it is 20% tighter.
+    static let cashEarnRate = 0.8
     static let xpPerMinute = 6
     static let minutesPerMatch = 90
     static let startingCash = 600
@@ -56,6 +60,11 @@ enum GameRules {
     /// Each place below 1st takes this share off the base reward, down to a floor.
     static let assessmentRankStep = 0.1
     static let assessmentRankFloor = 0.2
+
+    /// Applies `cashEarnRate` to one payout, rounding down so rounding never pays extra.
+    static func earnedCash(_ amount: Int) -> Int {
+        Int((Double(max(0, amount)) * cashEarnRate).rounded(.down))
+    }
 
     /// Reward for an assessment's class rank (1 = best). Marks and overall rank never count.
     static func assessmentRankFactor(classRank: Int?) -> Double {
@@ -1152,7 +1161,11 @@ struct StudyReward {
         let grade = gradeFactor(for: ratio, marksTotal: marksTotal)
         let cash = Double(max(0, minutes)) * Double(GameRules.clubCashPerMinute) * subject.cashMultiplier * kind.rewardMultiplier * grade
         let xp = Double(max(0, minutes)) * Double(GameRules.xpPerMinute) * subject.xpMultiplier * kind.rewardMultiplier * grade
-        return StudyReward(cash: Int(cash.rounded()), xp: Int(xp.rounded()), ratio: ratio)
+        return StudyReward(
+            cash: GameRules.earnedCash(Int(cash.rounded())),
+            xp: Int(xp.rounded()),
+            ratio: ratio
+        )
     }
 }
 
@@ -1548,7 +1561,7 @@ enum PackCatalog {
 }
 
 struct GameState: Codable {
-    static let currentSchemaVersion = 6
+    static let currentSchemaVersion = 7
 
     var schemaVersion: Int
     var createdAt: Date

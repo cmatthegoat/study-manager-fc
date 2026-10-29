@@ -321,6 +321,8 @@ struct MatchReportSheet: View {
     var userClubID: String?
     /// Fitness changes caused by this match. Empty for reports opened from history.
     var injuries: [InjuryUpdate] = []
+    /// Prospects the academy promoted on this matchday. Empty unless the intake fell due.
+    var academyIntake: [Player] = []
 
     private var home: Club? { ClubDatabase.club(for: report.homeClubID) }
     private var away: Club? { ClubDatabase.club(for: report.awayClubID) }
@@ -394,6 +396,10 @@ struct MatchReportSheet: View {
 
                     if !injuries.isEmpty {
                         injuryCard
+                    }
+
+                    if !academyIntake.isEmpty {
+                        academyIntakeCard
                     }
                 }
                 .padding(.horizontal, 24)
@@ -490,6 +496,40 @@ struct MatchReportSheet: View {
 
     /// Who went down in this match, and who is back. Previously the only way to find out was
     /// to open the squad and look, which left the next matchday a guess.
+    private var academyIntakeCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                title: "Academy Intake",
+                subtitle: "\(academyIntake.count) prospect\(academyIntake.count == 1 ? "" : "s") promoted to your squad",
+                symbol: "star.circle.fill"
+            )
+            ForEach(academyIntake) { player in
+                HStack(spacing: 10) {
+                    Text("\(player.overall)")
+                        .font(.system(size: 12, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                        .frame(width: 26, alignment: .leading)
+                    Text(player.name)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    Pill(text: player.position.abbreviation, color: .studyGold)
+                    Spacer()
+                    Text("POT \(player.potential)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.studyGreen)
+                    Text("AGE \(player.age)")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text("They are in the Squad tab now. Give them minutes and they will climb toward their ceiling.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .surface(padding: 16)
+    }
+
     private var injuryCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(

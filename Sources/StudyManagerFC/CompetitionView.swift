@@ -4,6 +4,7 @@ struct CompetitionView: View {
     @Environment(AppStore.self) private var store
     @State private var report: MatchReport?
     @State private var reportInjuries: [InjuryUpdate] = []
+    @State private var reportIntake: [Player] = []
     @State private var errorMessage: String?
 
     private var season: SeasonState? { store.season }
@@ -34,7 +35,8 @@ struct CompetitionView: View {
             MatchReportSheet(
                 report: matchReport,
                 userClubID: store.state.managedClubID,
-                injuries: reportInjuries
+                injuries: reportInjuries,
+                academyIntake: reportIntake
             )
             .environment(store)
         }
@@ -687,6 +689,7 @@ struct CompetitionView: View {
             let outcome = try store.simulateCurrentStage()
             if let userReport = outcome.userReport {
                 reportInjuries = outcome.injuries
+                reportIntake = outcome.academyIntake
                 report = userReport
             }
         } catch {

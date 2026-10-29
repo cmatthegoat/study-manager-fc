@@ -54,6 +54,9 @@ struct SimulationOutcome {
     let trophy: TrophyRecord?
     /// New injuries and recoveries from this matchday, in the order they happened.
     var injuries: [InjuryUpdate] = []
+    /// Prospects the academy promoted into the senior squad on this matchday. Empty unless
+    /// the intake fell due.
+    var academyIntake: [Player] = []
 }
 
 struct LevelUpAnnouncement: Equatable {
@@ -215,7 +218,14 @@ final class AppStore {
 
             let app = AppStore(persistence: PersistenceStore(baseDirectory: tempDir))
             let startingCash = app.state.clubCash
-            let expectedReward = Int((Double(GameRules.clubCashPerTodo) * StudySubject.ext1Maths.cashMultiplier).rounded())
+            let expectedReward = GameRules.earnedCash(
+                Int((Double(GameRules.clubCashPerTodo) * StudySubject.ext1Maths.cashMultiplier).rounded())
+            )
+            // The figure the board advertises must be the figure it pays.
+            guard app.todoReward(for: .ext1Maths) == expectedReward else {
+                print("SELF TEST FAIL: the advertised todo reward is not the payout")
+                exit(1)
+            }
             let todoID = app.state.todos[0].id
 
             // Completing pays the cash first, then clears the task off the board.
@@ -509,6 +519,19 @@ final class AppStore {
                 exit(1)
             }
 
+            // An academy batch has to land in the squad. The free-agent pool has no screen,
+            // so a prospect parked there was never actually delivered.
+            var intakeState = GameState.fresh()
+            intakeState.managedClubID = "arsenal"
+            let delivered = AppStore.deliverAcademyIntake(level: 3, season: 1, into: &intakeState)
+            guard delivered.count == GameRules.academyIntakePerSeason,
+                  intakeState.players.count == GameRules.academyIntakePerSeason,
+                  intakeState.freeAgents.isEmpty,
+                  delivered.allSatisfy({ $0.potential >= $0.overall && $0.age <= 18 }) else {
+                print("SELF TEST FAIL: an academy intake did not reach the squad")
+                exit(1)
+            }
+
             // A club's rating is the eleven it can field, not the EA club-level field: the
             // data file carries 94 for Real Madrid while their best XI averages far less.
             if let madrid = ClubDatabase.club(for: "real-madrid"),
@@ -759,7 +782,7 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, timer sessions filed only after review")
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes reaching the squad, timer sessions filed only after review")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -816,6 +839,25 @@ final class AppStore {
                 guard let dbID = draft.freeAgents[index].dbID,
                       let record = FcDatabase.shared.player(id: dbID) else { continue }
                 draft.freeAgents[index].potential = max(draft.freeAgents[index].overall, record.potential)
+            }
+        }
+        if draft.schemaVersion < 7 {
+            // Academy batches used to be appended to the free-agent pool, which no screen in
+            // the app ever shows, so every intake silently vanished. Rebuild the batches this
+            // season has already paid for and hand them to the squad.
+            let userMatches = draft.season?.fixtures.filter {
+                ($0.homeClubID == draft.managedClubID || $0.awayClubID == draft.managedClubID)
+                    && $0.isSimulated
+            }.count ?? 0
+            let owed = min(userMatches / GameRules.matchesPerAcademyIntake, 8)
+            if owed > 0 {
+                draft.players.append(
+                    contentsOf: PlayerFactory.makeAcademyIntake(
+                        level: draft.academyLevel,
+                        season: draft.seasonNumber,
+                        count: owed * GameRules.academyIntakePerSeason
+                    )
+                )
             }
         }
         draft.schemaVersion = GameState.currentSchemaVersion
@@ -1529,7 +1571,7 @@ final class AppStore {
 
     /// Club Cash earned for completing a todo, scaled by its subject's cash multiplier.
     func todoReward(for subject: StudySubject) -> Int {
-        Int((Double(GameRules.clubCashPerTodo) * subject.cashMultiplier).rounded())
+        GameRules.earnedCash(Int((Double(GameRules.clubCashPerTodo) * subject.cashMultiplier).rounded()))
     }
 
     /// Ticks a task off: pays its Club Cash and then removes it from the board, so a
@@ -1809,7 +1851,9 @@ final class AppStore {
         let subjectMultiplier = entry.subject.xpMultiplier
         let cashMultiplier = entry.subject.cashMultiplier
         let rankFactor = GameRules.assessmentRankFactor(classRank: entry.classRank)
-        entry.cashEarned = Int((Double(GameRules.assessmentBaseCash) * cashMultiplier * GameRules.examRewardMultiplier * rankFactor).rounded())
+        entry.cashEarned = GameRules.earnedCash(
+            Int((Double(GameRules.assessmentBaseCash) * cashMultiplier * GameRules.examRewardMultiplier * rankFactor).rounded())
+        )
         entry.xpEarned = Int((Double(GameRules.assessmentBaseXP) * subjectMultiplier * GameRules.examRewardMultiplier * rankFactor).rounded())
         var draft = state
         draft.clubCash += entry.cashEarned
@@ -1883,6 +1927,7 @@ final class AppStore {
         var userReport: MatchReport?
         var simulatedCount = 0
         var injuries: [InjuryUpdate] = []
+        var academyIntake: [Player] = []
         var ledger = state.scoringLedger
         // Saves from before the ledger existed seed it from the reports already played.
         if ledger.isEmpty {
@@ -2009,12 +2054,10 @@ final class AppStore {
             draft.matchesSinceAcademyIntake += 1
             if draft.matchesSinceAcademyIntake >= GameRules.matchesPerAcademyIntake {
                 draft.matchesSinceAcademyIntake = 0
-                draft.freeAgents.append(
-                    contentsOf: PlayerFactory.makeAcademyIntake(
-                        level: draft.academyLevel,
-                        season: draft.seasonNumber,
-                        count: 3
-                    )
+                academyIntake = Self.deliverAcademyIntake(
+                    level: draft.academyLevel,
+                    season: draft.seasonNumber,
+                    into: &draft
                 )
             }
         }
@@ -2026,8 +2069,22 @@ final class AppStore {
             phasePlayed: phasePlayed,
             championClub: ClubDatabase.club(for: season.championClubID),
             trophy: trophy,
-            injuries: injuries
+            injuries: injuries,
+            academyIntake: academyIntake
         )
+    }
+
+    /// Promotes one academy batch into the senior squad and returns the men who joined.
+    /// They belong in `players`, not the free-agent pool: the pool is only a source the
+    /// pack and market code draws from, and no screen ever lists its contents.
+    static func deliverAcademyIntake(level: Int, season: Int, into draft: inout GameState) -> [Player] {
+        let intake = PlayerFactory.makeAcademyIntake(
+            level: level,
+            season: season,
+            count: GameRules.academyIntakePerSeason
+        )
+        draft.players.append(contentsOf: intake)
+        return intake
     }
 
     /// Fitness bookkeeping for one match: existing injuries count down, then each fit starter
@@ -2304,7 +2361,7 @@ final class AppStore {
         let after = 1 + draft.xp / GameRules.xpPerLevel
         guard after > before else { return [] }
         let levels = Array((before + 1)...after)
-        let bonus = levels.count * GameRules.clubCashPerLevelUp * draft.players.count
+        let bonus = GameRules.earnedCash(levels.count * GameRules.clubCashPerLevelUp * draft.players.count)
         draft.clubCash += bonus
         return levels
     }
@@ -2314,7 +2371,7 @@ final class AppStore {
         guard let topLevel = levels.last else { return }
         levelUpAnnouncement = LevelUpAnnouncement(
             level: topLevel,
-            bonus: levels.count * GameRules.clubCashPerLevelUp * state.players.count
+            bonus: GameRules.earnedCash(levels.count * GameRules.clubCashPerLevelUp * state.players.count)
         )
     }
 
