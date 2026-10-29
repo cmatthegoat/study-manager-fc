@@ -77,6 +77,7 @@ Useful entry points:
 swift run StudyManagerFC --self-test        # round-trips a career in a temp dir
 swift run StudyManagerFC --verify-database  # proves the bundled DB decodes
 Scripts/package-app.sh                      # writes dist/StudyManagerFC.app
+Scripts/package-dmg.sh                      # writes dist/StudyManagerFC.dmg (drag-to-Applications image)
 ```
 
 Requires Xcode 15+ / Swift 5.9 and macOS 14 (the package targets `.macOS(.v14)`).
@@ -130,7 +131,7 @@ data file's real potential, floored at the rating they have already reached.
 ```
 Package.swift              SwiftPM manifest (macOS app)
 Sources/StudyManagerFC/    Swift app: models, engines, store, views, theme, data
-Scripts/                   extract-fc-database.py, fill-potential.py, package-app.sh
+Scripts/                   extract-fc-database.py, fill-potential.py, package-app.sh, package-dmg.sh
 ```
 
 Large and generated paths are ignored by `.gitignore`: `.build/`, `dist/`,
