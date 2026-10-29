@@ -68,7 +68,7 @@ private struct QuickTodoCard: View {
             )
 
             TextField("e.g. p1 #Ext 2 Maths - Complex Numbers: finish 4.2", text: $draftTitle)
-                .textFieldStyle(.roundedBorder)
+                .bentoField()
                 .onSubmit(add)
 
             HStack(spacing: 10) {
@@ -166,16 +166,11 @@ private struct FocusTimerCard: View {
             }
 
             Text(timeText)
-                .font(.system(size: 64, weight: .black, design: .rounded))
+                .font(.system(size: 68, weight: .black, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [Color.studyGreen, Color.studyTeal],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .shadow(color: Color.studyGreen.opacity(0.35), radius: 14)
+                .foregroundStyle(Neon.sweep)
+                .shadow(color: Neon.accent.opacity(0.55), radius: 22)
+                .shadow(color: Neon.accentAlt.opacity(0.35), radius: 10)
                 .contentTransition(.numericText())
                 .frame(maxWidth: .infinity)
 
@@ -264,12 +259,12 @@ private struct FocusTimerCard: View {
                         get: { store.timerMarksObtained.map(String.init) ?? "" },
                         set: { store.timerMarksObtained = Int($0) }
                     ))
-                    .textFieldStyle(.roundedBorder)
+                    .bentoField()
                     TextField("Attempted", text: Binding(
                         get: { store.timerMarksTotal.map(String.init) ?? "" },
                         set: { store.timerMarksTotal = Int($0) }
                     ))
-                    .textFieldStyle(.roundedBorder)
+                    .bentoField()
                 }
             }
 
@@ -455,13 +450,13 @@ private struct TimerReviewSheet: View {
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
                         TextField("Gained", text: $marksObtained)
-                            .textFieldStyle(.roundedBorder)
+                            .bentoField()
                             .frame(width: 90)
                         Text("out of")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                         TextField("Total", text: $marksTotal)
-                            .textFieldStyle(.roundedBorder)
+                            .bentoField()
                             .frame(width: 90)
                         Spacer()
                         Text("Leave blank if this work was unmarked")
@@ -595,14 +590,41 @@ private struct QuickLogCard: View {
                 symbol: "square.and.pencil"
             )
 
-            Picker("Activity", selection: $kind) {
+            // Pill tabs rather than the system segmented control, which is a light control
+            // and fights the dark canvas.
+            HStack(spacing: 6) {
                 ForEach(kinds) { activity in
-                    Label(activity.title, systemImage: activity.systemImage)
-                        .tag(activity)
+                    let isSelected = kind == activity
+                    Button {
+                        kind = activity
+                    } label: {
+                        Text(activity.title)
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.6))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background {
+                                if isSelected {
+                                    Capsule().fill(
+                                        LinearGradient(
+                                            colors: [Neon.accent, Neon.accentAlt],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .shadow(color: Neon.accent.opacity(0.55), radius: 10)
+                                } else {
+                                    Capsule().fill(Color.white.opacity(0.05))
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
+                                }
+                            }
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(activity.title)
                 }
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
             HStack(spacing: 10) {
                 BentoMenu(
@@ -620,7 +642,7 @@ private struct QuickLogCard: View {
                 )
 
                 TextField("What did you work on?", text: $title)
-                    .textFieldStyle(.roundedBorder)
+                    .bentoField()
             }
             .onChange(of: subject) { _, _ in
                 subtopicID = nil
@@ -638,12 +660,12 @@ private struct QuickLogCard: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     TextField("Gained", text: $marksObtained)
-                        .textFieldStyle(.roundedBorder)
+                        .bentoField()
                         .frame(width: 70)
                     Text("/")
                         .foregroundStyle(.secondary)
                     TextField("Attempted", text: $marksTotal)
-                        .textFieldStyle(.roundedBorder)
+                        .bentoField()
                         .frame(width: 80)
                     if let parsedMarks, let percentage = reward.percentage {
                         Pill(text: "\(parsedMarks.obtained)/\(parsedMarks.total) · \(percentage)%", color: .studyGreen, icon: "percent")

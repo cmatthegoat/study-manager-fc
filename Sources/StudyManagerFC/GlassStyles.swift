@@ -39,18 +39,28 @@ struct GlassRim: View {
 struct GlassBackdrop<Fallback: View>: View {
     let cornerRadius: CGFloat
     var tint: Color? = nil
+    /// The lit rim is opt-out because a panel that draws its own neon border would end up
+    /// with two edges a point apart.
+    var showsRim = true
+    /// `.clear` keeps the glass transparent so the glow behind it shows through. `.regular`
+    /// frosts the backdrop into a milky sheet, which this design deliberately avoids.
+    var crisp = true
     @ViewBuilder var fallback: () -> Fallback
 
     var body: some View {
         ZStack {
             if #available(macOS 26.0, *) {
                 Color.clear
-                    .glassEffect(Self.glass(tint: tint), in: shape)
+                    .glassEffect(Self.glass(tint: tint, crisp: crisp), in: shape)
             } else {
                 fallback()
             }
         }
-        .overlay(GlassRim(cornerRadius: cornerRadius))
+        .overlay {
+            if showsRim {
+                GlassRim(cornerRadius: cornerRadius)
+            }
+        }
     }
 
     private var shape: RoundedRectangle {
@@ -58,8 +68,8 @@ struct GlassBackdrop<Fallback: View>: View {
     }
 
     @available(macOS 26.0, *)
-    private static func glass(tint: Color?) -> Glass {
-        var glass: Glass = .regular
+    private static func glass(tint: Color?, crisp: Bool) -> Glass {
+        var glass: Glass = crisp ? .clear : .regular
         if let tint {
             glass = glass.tint(tint)
         }
@@ -71,6 +81,7 @@ private struct GlassChromeModifier: ViewModifier {
     let cornerRadius: CGFloat
     let tint: Color?
     let interactive: Bool
+    let crisp: Bool
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -91,7 +102,7 @@ private struct GlassChromeModifier: ViewModifier {
 
     @available(macOS 26.0, *)
     private var glass: Glass {
-        var glass: Glass = .regular
+        var glass: Glass = crisp ? .clear : .regular
         if let tint {
             glass = glass.tint(tint)
         }
@@ -108,8 +119,16 @@ extension View {
     func glassChrome(
         cornerRadius: CGFloat = 20,
         tint: Color? = nil,
-        interactive: Bool = false
+        interactive: Bool = false,
+        crisp: Bool = true
     ) -> some View {
-        modifier(GlassChromeModifier(cornerRadius: cornerRadius, tint: tint, interactive: interactive))
+        modifier(
+            GlassChromeModifier(
+                cornerRadius: cornerRadius,
+                tint: tint,
+                interactive: interactive,
+                crisp: crisp
+            )
+        )
     }
 }

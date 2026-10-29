@@ -184,6 +184,43 @@ extension Club {
     }
 }
 
+/// The neon skin: an inky navy canvas, lit accent borders, and gradients that sweep from the
+/// club's primary through violet into its secondary. Keeping the accents club-driven means
+/// the skin follows the team you manage, the way the rest of the app already does.
+enum Neon {
+    static let canvas = Color(hex: "05050C")
+    static let panel = Color(hex: "0A0A1A")
+
+    static var accent: Color { TeamTheme.primary }
+    static var accentAlt: Color { TeamTheme.secondary }
+
+    /// Primary → violet → secondary: the timer numerals and the big call-to-action buttons.
+    static var sweep: LinearGradient {
+        LinearGradient(
+            colors: [accent, Color(hex: "8B5CF6"), accentAlt],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    static var cta: LinearGradient {
+        LinearGradient(
+            colors: [accent.opacity(0.95), accentAlt.opacity(0.92)],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    /// The hairline that reads as a lit edge around every panel.
+    static var border: LinearGradient {
+        LinearGradient(
+            colors: [accent.opacity(0.60), Color.white.opacity(0.10), accentAlt.opacity(0.50)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
 extension PlayerRarity {
     var accentColor: Color {
         switch self {
@@ -224,20 +261,23 @@ extension PlayerRarity {
 extension View {
     /// A bento card. On macOS 26 this is Liquid Glass; older systems keep the translucent
     /// material fill. Either way the card carries the same lit top edge and diffuse shadow.
-    func surface(padding: CGFloat = 20, cornerRadius: CGFloat = 26) -> some View {
+    func surface(padding: CGFloat = 20, cornerRadius: CGFloat = 20) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
             .padding(padding)
             .background {
-                GlassBackdrop(cornerRadius: cornerRadius) {
-                    ZStack {
-                        shape.fill(Color(hex: "12121A").opacity(0.7))
-                        shape.fill(.ultraThinMaterial)
-                    }
+                GlassBackdrop(
+                    cornerRadius: cornerRadius,
+                    tint: Neon.panel.opacity(0.50),
+                    showsRim: false
+                ) {
+                    shape.fill(Neon.panel.opacity(0.88))
                 }
             }
+            .overlay(shape.stroke(Neon.border, lineWidth: 1))
             .clipShape(shape)
-            .shadow(color: Color.black.opacity(0.5), radius: 15, x: 0, y: 8)
+            .shadow(color: Neon.accent.opacity(0.18), radius: 22, x: 0, y: 2)
+            .shadow(color: Color.black.opacity(0.55), radius: 16, x: 0, y: 8)
     }
 
     /// The hero surface: glass tinted with the canvas accent, so the sign-in and club-picking
@@ -247,16 +287,20 @@ extension View {
         return self
             .padding(padding)
             .background {
-                GlassBackdrop(cornerRadius: cornerRadius, tint: Color.studyViolet.opacity(0.20)) {
+                GlassBackdrop(
+                    cornerRadius: cornerRadius,
+                    tint: Neon.accentAlt.opacity(0.22),
+                    showsRim: false
+                ) {
                     ZStack {
                         shape.fill(
                             LinearGradient(
-                                colors: [Color.studyViolet.opacity(0.12), Color.white.opacity(0.03), Color.studyAmber.opacity(0.05)],
+                                colors: [Neon.accent.opacity(0.16), Color.white.opacity(0.03), Neon.accentAlt.opacity(0.12)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                        shape.fill(Color.white.opacity(0.03))
+                        shape.fill(Neon.panel.opacity(0.80))
                     }
                 }
             }
@@ -292,21 +336,25 @@ struct AppBackground: View {
 
     var body: some View {
         ZStack {
-            Color.studyCanvas
+            Neon.canvas
             GeometryReader { proxy in
                 let width = proxy.size.width
                 let height = proxy.size.height
                 let reach = max(width, height)
                 let leaks = palette
                 ZStack {
-                    leak(leaks[0], 0.34, diameter: reach * 0.95, at: CGPoint(x: width * 0.10, y: -height * 0.08))
-                    leak(leaks[1], 0.24, diameter: reach * 0.62, at: CGPoint(x: width * 0.32, y: height * 0.16))
-                    leak(leaks[2], 0.28, diameter: reach * 0.80, at: CGPoint(x: width * 0.88, y: height * 0.42))
-                    leak(leaks[3], 0.18, diameter: reach * 0.55, at: CGPoint(x: width * 0.58, y: height * 0.74))
-                    leak(leaks[4], 0.22, diameter: reach * 0.66, at: CGPoint(x: width * 0.94, y: height * 1.02))
-                    leak(leaks[5], 0.16, diameter: reach * 0.48, at: CGPoint(x: width * 0.72, y: height * 0.88))
+                    // Hotter and tighter than before: the glass has to have something to
+                    // bend, or it just reads as grey.
+                    leak(leaks[0], 0.58, diameter: reach * 0.90, at: CGPoint(x: width * 0.02, y: -height * 0.10))
+                    leak(leaks[1], 0.42, diameter: reach * 0.55, at: CGPoint(x: width * 0.22, y: height * 0.14))
+                    leak(leaks[2], 0.50, diameter: reach * 0.72, at: CGPoint(x: width * 0.92, y: height * 0.30))
+                    leak(leaks[3], 0.30, diameter: reach * 0.46, at: CGPoint(x: width * 0.55, y: height * 0.80))
+                    leak(leaks[4], 0.44, diameter: reach * 0.62, at: CGPoint(x: width * 0.98, y: height * 1.04))
+                    leak(leaks[5], 0.26, diameter: reach * 0.42, at: CGPoint(x: width * 0.76, y: height * 0.92))
+                    // A violet bloom keeps the middle of the canvas from going flat.
+                    leak(Color(hex: "8B5CF6"), 0.20, diameter: reach * 0.50, at: CGPoint(x: width * 0.42, y: height * 0.48))
                 }
-                .blur(radius: 40)
+                .blur(radius: 55)
             }
         }
         .ignoresSafeArea()
@@ -335,14 +383,17 @@ struct ScreenHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(eyebrow.uppercased())
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .tracking(1.5)
-                .foregroundStyle(Color.studyGreen)
+                .font(.system(size: 10, weight: .black, design: .rounded))
+                .tracking(1.8)
+                .foregroundStyle(Neon.accent)
+                .shadow(color: Neon.accent.opacity(0.45), radius: 8)
             Text(title)
-                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .font(.system(size: 33, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .shadow(color: Color.black.opacity(0.35), radius: 12, y: 4)
             Text(subtitle)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Color.white.opacity(0.55))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -354,11 +405,21 @@ struct SectionHeader: View {
     var symbol: String?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             if let symbol {
                 Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.studyGreen)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        LinearGradient(
+                            colors: [Neon.accent, Neon.accentAlt],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    )
+                    .shadow(color: Neon.accent.opacity(0.55), radius: 9)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -385,14 +446,23 @@ struct MetricTile: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Image(systemName: symbol)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 28, height: 28)
-                    .background(tint.opacity(0.12), in: Circle())
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        LinearGradient(
+                            colors: [tint.opacity(0.95), tint.opacity(0.55)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    )
+                    .shadow(color: tint.opacity(0.5), radius: 9)
                 Spacer()
             }
             Text(value)
-                .font(.system(size: 23, weight: .bold, design: .rounded))
+                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
                 .contentTransition(.numericText())
             VStack(alignment: .leading, spacing: 3) {
                 Text(title.uppercased())
@@ -487,6 +557,7 @@ struct Pill: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(color.opacity(0.12), in: Capsule())
+        .overlay(Capsule().stroke(color.opacity(0.30), lineWidth: 0.75))
     }
 }
 
@@ -567,22 +638,33 @@ struct BentoProminentButtonStyle: ButtonStyle {
     @Environment(\.bentoTint) private var accent
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(accent.color.opacity(configuration.isPressed ? 1 : 0.86))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
-            )
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return configuration.label
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(shape.fill(fill(pressed: configuration.isPressed)))
+            .overlay(shape.stroke(Color.white.opacity(0.28), lineWidth: 1))
             .foregroundStyle(accent.onColor)
             .opacity(isEnabled ? 1 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .shadow(color: accent.color.opacity(configuration.isPressed ? 0.15 : 0.32), radius: 10, y: 4)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .shadow(color: accent.color.opacity(configuration.isPressed ? 0.30 : 0.62), radius: 16, y: 5)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+
+    /// Gradient fills for the club accents, a flat wash for the neutral roles.
+    private func fill(pressed: Bool) -> AnyShapeStyle {
+        switch accent {
+        case .primary:
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [accent.color, Neon.accentAlt],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+        default:
+            return AnyShapeStyle(accent.color.opacity(pressed ? 1 : 0.9))
+        }
     }
 }
 
@@ -591,20 +673,15 @@ struct BentoBorderedButtonStyle: ButtonStyle {
     @Environment(\.bentoTint) private var accent
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.12 : 0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
-            )
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return configuration.label
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(shape.fill(Color.white.opacity(configuration.isPressed ? 0.14 : 0.06)))
+            .overlay(shape.stroke(Color.white.opacity(0.18), lineWidth: 1))
             .foregroundStyle(accent.color)
             .opacity(isEnabled ? 1 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
@@ -615,6 +692,26 @@ extension ButtonStyle where Self == BentoProminentButtonStyle {
 
 extension ButtonStyle where Self == BentoBorderedButtonStyle {
     static var bentoBordered: BentoBorderedButtonStyle { BentoBorderedButtonStyle() }
+}
+
+extension View {
+    /// Dark, hairline-bordered input. The system `.roundedBorder` field is a light control
+    /// that tears a hole in the dark canvas, so every text field in the app uses this.
+    func bentoField() -> some View {
+        self
+            .textFieldStyle(.plain)
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+    }
 }
 
 struct EmptyStateView: View {

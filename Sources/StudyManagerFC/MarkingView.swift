@@ -184,7 +184,7 @@ struct MarkingView: View {
             }
 
             TextField("Marker's comments — optional", text: $comments)
-                .textFieldStyle(.roundedBorder)
+                .bentoField()
                 .font(.system(size: 11))
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -159,24 +159,25 @@ struct MainTabView: View {
     private static let requiredResetConfirmations = 5
 
     var body: some View {
-        VStack(spacing: 0) {
-            // A floating glass command bar rather than a full-width strip with a rule under
-            // it: the sections, offers, change team and reset all live on one lit panel.
-            HStack(spacing: 8) {
-                SectionSwitcher(selection: $selection)
-                TransferOffersButton()
-                changeTeamButton
-                resetButton
+        HStack(spacing: 12) {
+            AppSidebar(selection: $selection)
+
+            VStack(spacing: 0) {
+                // The page-level actions sit top-right, level with each screen's title.
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    TransferOffersButton()
+                    changeTeamButton
+                    resetButton
+                }
+                .padding(.horizontal, 4)
+                .padding(.top, 2)
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .glassChrome(cornerRadius: 20)
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 6)
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .padding(12)
         .background(AppBackground())
         .sheet(isPresented: $showingChangeTeam) {
             ChangeTeamSheet()
@@ -273,35 +274,4 @@ struct MainTabView: View {
     }
 }
 
-private struct SectionSwitcher: View {
-    @Binding var selection: MainSection
 
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(MainSection.allCases) { section in
-                Button {
-                    selection = section
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: section.systemImage)
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(section.title)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .foregroundStyle(selection == section ? Color.studyGreen : Color.secondary)
-                    .glassChrome(
-                        cornerRadius: 999,
-                        tint: selection == section ? Color.studyGreen.opacity(0.35) : nil,
-                        interactive: selection == section
-                    )
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help(section.title)
-            }
-            Spacer()
-        }
-    }
-}

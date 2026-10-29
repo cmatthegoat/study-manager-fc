@@ -467,7 +467,7 @@ struct NegotiationSheet: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                     TextField("Amount", text: $offerText)
-                        .textFieldStyle(.roundedBorder)
+                        .bentoField()
                         .frame(width: 100)
                     Button("Submit") {
                         if let amount = Int(offerText.replacingOccurrences(of: ",", with: "")) {

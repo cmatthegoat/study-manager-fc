@@ -238,7 +238,7 @@ private struct OfferNegotiationPanel: View {
             if live != nil && !isSettled {
                 HStack(spacing: 8) {
                     TextField("Counter", text: $counterText)
-                        .textFieldStyle(.roundedBorder)
+                        .bentoField()
                         .frame(width: 110)
                     Button("Send") { sendCounter() }
                         .buttonStyle(.bentoBordered)
