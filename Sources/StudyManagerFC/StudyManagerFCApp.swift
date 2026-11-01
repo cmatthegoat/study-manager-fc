@@ -117,6 +117,7 @@ enum MainSection: String, CaseIterable, Identifiable {
     case transfers
     case europe
     case exams
+    case journal
     case marking
 
     var id: String { rawValue }
@@ -131,6 +132,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .transfers: "Transfers"
         case .europe: "Champions League"
         case .exams: "Exams"
+        case .journal: "Journal"
         case .marking: "AI Marking"
         }
     }
@@ -145,6 +147,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .transfers: "arrow.left.arrow.right"
         case .europe: "trophy"
         case .exams: "doc.text.magnifyingglass"
+        case .journal: "shield.lefthalf.filled"
         case .marking: "wand.and.stars"
         }
     }
@@ -268,6 +271,8 @@ struct MainTabView: View {
             CompetitionView()
         case .exams:
             ExamsView()
+        case .journal:
+            BulletproofJournalView()
         case .marking:
             MarkingView()
         }

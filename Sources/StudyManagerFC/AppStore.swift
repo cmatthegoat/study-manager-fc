@@ -282,6 +282,52 @@ final class AppStore {
                 exit(1)
             }
 
+            // Bulletproof Journal: an entry keeps its topic name, fix and scan across a
+            // reload, revision is counted, resolving keeps the entry, and deleting it takes
+            // the attached scan with it.
+            guard let scan = app.storeJournalAttachment(data: Data([0x89, 0x50, 0x4E, 0x47]), fileExtension: "png"),
+                  FileManager.default.fileExists(atPath: app.journalAttachmentURL(scan).path),
+                  let journalID = app.addMistake(
+                    MistakeEntry(
+                        subject: .ext1Maths,
+                        subtopicID: topic.id,
+                        mistake: "Integrated x² as x²/2",
+                        fix: "Raise the power before dividing",
+                        questionRef: "Q4",
+                        marksLost: 2,
+                        source: .aiMarked,
+                        attachment: scan
+                    )
+                  ) else {
+                print("SELF TEST FAIL: a journal entry could not be logged")
+                exit(1)
+            }
+            guard app.mistakes.count == 1,
+                  app.mistakes[0].subtopicName == "Vectors",
+                  app.mistakes[0].source == .aiMarked else {
+                print("SELF TEST FAIL: the journal entry did not keep its topic or source")
+                exit(1)
+            }
+            app.reviewMistake(journalID)
+            app.setMistakeResolved(journalID, resolved: true)
+            guard app.mistakes[0].reviewCount == 1, app.mistakes[0].isResolved else {
+                print("SELF TEST FAIL: revising or resolving a journal entry did not stick")
+                exit(1)
+            }
+            let journalReload = AppStore(persistence: PersistenceStore(baseDirectory: tempDir))
+            guard journalReload.mistakes.count == 1,
+                  journalReload.mistakes[0].fix == "Raise the power before dividing",
+                  journalReload.mistakes(for: .ext1Maths).count == 1 else {
+                print("SELF TEST FAIL: the journal did not survive a reload")
+                exit(1)
+            }
+            journalReload.deleteMistake(journalID)
+            guard AppStore(persistence: PersistenceStore(baseDirectory: tempDir)).mistakes.isEmpty,
+                  !FileManager.default.fileExists(atPath: journalReload.journalAttachmentURL(scan).path) else {
+                print("SELF TEST FAIL: deleting a journal entry left it or its scan behind")
+                exit(1)
+            }
+
             // Inline directives: `p2 #Ext 1 Maths - Vectors: do 3.2`
             let parsed = TodoInput.parse("p2 #Ext 1 Maths - Vectors: do 3.2", subtopics: [topic])
             guard parsed.subject == .ext1Maths, parsed.subtopicName == "Vectors", parsed.priority == 2, parsed.title == "do 3.2" else {
@@ -1869,6 +1915,98 @@ final class AppStore {
         var draft = state
         draft.assessments.removeAll { $0.id == id }
         commit(draft)
+    }
+
+    // MARK: - Bulletproof Journal
+
+    /// Every logged mistake, newest first. The journal is a record rather than a reward:
+    /// nothing here pays cash or XP, so it cannot be farmed by writing the same error twice.
+    var mistakes: [MistakeEntry] { state.mistakes }
+
+    /// Saves a mistake. Returns its id, or nil when there is no career or the entry is blank.
+    @discardableResult
+    func addMistake(_ entry: MistakeEntry) -> UUID? {
+        guard hasCareer, !entry.isEmpty else { return nil }
+        var stored = entry
+        stored.mistake = stored.mistake.trimmingCharacters(in: .whitespacesAndNewlines)
+        stored.fix = stored.fix.trimmingCharacters(in: .whitespacesAndNewlines)
+        stored.questionRef = stored.questionRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The topic name is copied in so the entry still reads correctly if the topic goes.
+        if stored.subtopicID != nil, stored.subtopicName == nil {
+            stored.subtopicName = state.subtopics.first { $0.id == stored.subtopicID }?.name
+        }
+        var draft = state
+        draft.mistakes.insert(stored, at: 0)
+        commit(draft)
+        return stored.id
+    }
+
+    func updateMistake(_ entry: MistakeEntry) {
+        guard let index = state.mistakes.firstIndex(where: { $0.id == entry.id }) else { return }
+        guard !entry.isEmpty else { return }
+        var draft = state
+        draft.mistakes[index] = entry
+        commit(draft)
+    }
+
+    /// Removes a mistake and any scan attached to it, so deleting a journal entry does not
+    /// leave an orphaned image in the career folder forever.
+    func deleteMistake(_ id: UUID) {
+        guard let entry = state.mistakes.first(where: { $0.id == id }) else { return }
+        var draft = state
+        draft.mistakes.removeAll { $0.id == id }
+        commit(draft)
+        if let attachment = entry.attachment {
+            try? FileManager.default.removeItem(at: persistence.journalAttachmentURL(attachment))
+        }
+    }
+
+    /// Counts one revision pass over an entry and stamps the date, so the journal can tell
+    /// you which mistakes you have actually revisited and which are still unread.
+    func reviewMistake(_ id: UUID) {
+        guard let index = state.mistakes.firstIndex(where: { $0.id == id }) else { return }
+        var draft = state
+        draft.mistakes[index].reviewCount += 1
+        draft.mistakes[index].lastReviewed = Date()
+        commit(draft)
+    }
+
+    /// Marks an error as beaten, or reopens it when it comes back in a later paper.
+    func setMistakeResolved(_ id: UUID, resolved: Bool) {
+        guard let index = state.mistakes.firstIndex(where: { $0.id == id }) else { return }
+        guard state.mistakes[index].isResolved != resolved else { return }
+        var draft = state
+        draft.mistakes[index].isResolved = resolved
+        if resolved {
+            draft.mistakes[index].lastReviewed = Date()
+        }
+        commit(draft)
+    }
+
+    /// Copies an attached scan beside the career file and returns the file name to store on
+    /// the entry. Images are kept out of the save so career.json stays small and readable.
+    func storeJournalAttachment(data: Data, fileExtension: String) -> String? {
+        let cleaned = fileExtension.lowercased().filter(\.isLetter)
+        let name = "\(UUID().uuidString).\(cleaned.isEmpty ? "jpg" : cleaned)"
+        do {
+            let directory = persistence.journalAttachmentsDirectory
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try data.write(to: directory.appendingPathComponent(name), options: .atomic)
+            return name
+        } catch {
+            saveErrorMessage = "Could not keep that attachment: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    func journalAttachmentURL(_ name: String) -> URL {
+        persistence.journalAttachmentURL(name)
+    }
+
+    /// Every journal entry already logged for a subject, newest first. Used to warn about a
+    /// mistake you have hit before while a new paper is being reviewed.
+    func mistakes(for subject: StudySubject) -> [MistakeEntry] {
+        state.mistakes.filter { $0.subject == subject }
     }
 
     func openPack(packID: String) throws -> [Player] {

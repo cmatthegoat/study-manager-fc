@@ -24,6 +24,16 @@ struct PersistenceStore {
         decoder.dateDecodingStrategy = .iso8601
     }
 
+    /// Scans attached to Bulletproof Journal entries live beside the career file rather than
+    /// inside it, so a journal full of photos does not bloat the save.
+    var journalAttachmentsDirectory: URL {
+        directory.appendingPathComponent("JournalAttachments", isDirectory: true)
+    }
+
+    func journalAttachmentURL(_ name: String) -> URL {
+        journalAttachmentsDirectory.appendingPathComponent(name)
+    }
+
     func load() throws -> GameState? {
         guard FileManager.default.fileExists(atPath: saveURL.path) else { return nil }
         let data = try Data(contentsOf: saveURL)

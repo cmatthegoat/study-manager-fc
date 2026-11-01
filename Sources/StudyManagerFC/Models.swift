@@ -831,6 +831,61 @@ struct StudySession: Identifiable, Codable, Hashable {
     }
 }
 
+/// Where a journal entry came from, so the list can show whether the student spotted the
+/// error themselves or the on-device model flagged it.
+enum MistakeSource: String, Codable, CaseIterable, Identifiable {
+    case manual
+    case aiMarked
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .manual: "Logged by hand"
+        case .aiMarked: "Flagged by AI marking"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .manual: "pencil"
+        case .aiMarked: "wand.and.stars"
+        }
+    }
+}
+
+/// One mistake worth never repeating: what went wrong, what to do instead, and optional
+/// evidence (a scan of the working) kept beside the career file rather than inside it.
+struct MistakeEntry: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var date: Date = Date()
+    var subject: StudySubject
+    /// Identifies the topic this mistake belongs to, if any.
+    var subtopicID: UUID? = nil
+    /// Stored alongside the id so the entry survives the topic being deleted.
+    var subtopicName: String? = nil
+    /// What went wrong, in the student's own words.
+    var mistake: String
+    /// The rule or step to apply next time.
+    var fix: String = ""
+    /// Where the paper question sat, e.g. "Q4" or "2024 Trial Q2b". Empty for free-form notes.
+    var questionRef: String = ""
+    var marksLost: Int? = nil
+    var source: MistakeSource = .manual
+    /// File name inside the career's Attachments folder. Nil when no evidence was attached.
+    var attachment: String? = nil
+    /// How many times this entry has been re-read as revision.
+    var reviewCount: Int = 0
+    var lastReviewed: Date? = nil
+    /// Set once the student is confident the error is gone. Resolved entries stay as proof
+    /// of the fix rather than being deleted.
+    var isResolved: Bool = false
+
+    var isEmpty: Bool {
+        mistake.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 /// A task that can be organized into a subject and subtopic, similar to StudySession
 /// but for general to-do items outside of study tracking.
 struct TodoItem: Identifiable, Codable, Hashable {
@@ -1561,7 +1616,7 @@ enum PackCatalog {
 }
 
 struct GameState: Codable {
-    static let currentSchemaVersion = 7
+    static let currentSchemaVersion = 8
 
     var schemaVersion: Int
     var createdAt: Date
@@ -1599,6 +1654,8 @@ struct GameState: Codable {
     var assessments: [Assessment] = []
     /// Optional so a career saved before formations existed still opens as a 4-3-3.
     var formation: Formation? = nil
+    /// The Bulletproof Journal: mistakes logged by hand or flagged while a paper was marked.
+    var mistakes: [MistakeEntry] = []
 
     var activeFormation: Formation { formation ?? .f433 }
 
@@ -1637,6 +1694,7 @@ struct GameState: Codable {
         case matchesSinceAcademyIntake
         case assessments
         case formation
+        case mistakes
     }
 
     static func fresh() -> GameState {
@@ -1720,6 +1778,7 @@ extension GameState {
         assessments = try container.decodeIfPresent([Assessment].self, forKey: .assessments) ?? []
         // Careers saved before formations existed have no key here and open as a 4-3-3.
         formation = try container.decodeIfPresent(Formation.self, forKey: .formation)
+        mistakes = try container.decodeIfPresent([MistakeEntry].self, forKey: .mistakes) ?? []
     }
 }
 

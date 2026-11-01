@@ -24,6 +24,9 @@ struct MarkingView: View {
     @State private var importMessage: String?
     @State private var result: MarkingResult?
     @State private var savedMessage: String?
+    /// Set once the dropped marks have been copied into the Bulletproof Journal, so the same
+    /// result cannot be filed twice by pressing the button again.
+    @State private var journalMessage: String?
     /// True when the last pass ran with no rubric, so the result can say the marking was its own.
     @State private var markedWithoutGuidelines = false
 
@@ -303,9 +306,12 @@ struct MarkingView: View {
                     subtitle: "\(result.totalAwarded) of \(result.totalOutOf) marks\(result.percentage.map { " · \($0)%" } ?? "")",
                     symbol: "checkmark.seal"
                 )
-                Button("Mark again") { self.result = nil }
-                    .buttonStyle(.bentoBordered)
-                    .bentoTint(.white)
+                Button("Mark again") {
+                    self.result = nil
+                    journalMessage = nil
+                }
+                .buttonStyle(.bentoBordered)
+                .bentoTint(.white)
             }
 
             VStack(spacing: 0) {
@@ -356,6 +362,8 @@ struct MarkingView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
+            journalRow(result)
+
             HStack {
                 if let savedMessage {
                     Text(savedMessage)
@@ -372,11 +380,62 @@ struct MarkingView: View {
         .surface(padding: 16)
     }
 
+    /// Every question that lost marks becomes a journal entry, described with the marker's
+    /// own reason. The fix is left for the student, because the rule to remember is theirs.
+    private func journalRow(_ result: MarkingResult) -> some View {
+        let dropped = result.questions.filter { $0.awarded < $0.outOf }
+        return HStack(spacing: 10) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.studyViolet)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(dropped.isEmpty
+                     ? "Full marks — nothing to journal"
+                     : "\(dropped.count) dropped \(dropped.count == 1 ? "mark" : "marks") worth keeping")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                Text(journalMessage ?? "File the dropped marks in the Bulletproof Journal so the same error is revised before the next paper.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(journalMessage == nil ? Color.secondary : Color.studyGreen)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Send to Journal") { journal(result) }
+                .buttonStyle(.bentoBordered)
+                .bentoTint(.secondary)
+                .font(.system(size: 10, weight: .semibold))
+                .disabled(dropped.isEmpty || journalMessage != nil)
+        }
+        .padding(11)
+        .background(Color.studyViolet.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.studyViolet.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private func journal(_ result: MarkingResult) {
+        var filed = 0
+        for question in result.questions where question.awarded < question.outOf {
+            let entry = MistakeEntry(
+                subject: subject,
+                mistake: "\(question.question): \(question.reason)",
+                questionRef: question.question,
+                marksLost: question.outOf - question.awarded,
+                source: .aiMarked
+            )
+            if store.addMistake(entry) != nil { filed += 1 }
+        }
+        journalMessage = filed == 0
+            ? "Nothing could be saved."
+            : "Filed \(filed) \(filed == 1 ? "entry" : "entries") — open the Journal tab to add the fixes."
+    }
+
     // MARK: - Actions
 
     private func mark() {
         errorMessage = nil
         savedMessage = nil
+        journalMessage = nil
         guard let total = Int(totalMarks), total > 0 else {
             errorMessage = "Enter the paper's total marks."
             return
