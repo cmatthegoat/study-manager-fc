@@ -20,6 +20,7 @@ struct DashboardView: View {
                         FocusTimerCard()
                         QuickLogCard()
                         QuickTodoCard()
+                        JournalNudgeCard()
                     }
                     .frame(maxWidth: .infinity)
 
@@ -36,6 +37,73 @@ struct DashboardView: View {
             .frame(maxWidth: 1400)
             .frame(maxWidth: .infinity)
         }
+    }
+}
+
+/// The journal's presence on the dashboard. A mistake only helps if it is revisited, so the
+/// card puts the entries that have never been re-read in front of you without leaving the
+/// screen you start the day on.
+private struct JournalNudgeCard: View {
+    @Environment(AppStore.self) private var store
+
+    private var open: [MistakeEntry] {
+        store.mistakes.filter { !$0.isResolved }
+    }
+
+    /// Unrevised entries first, because those are the ones still costing marks.
+    private var preview: [MistakeEntry] {
+        let unrevised = open.filter { $0.reviewCount == 0 }
+        return Array((unrevised + open.filter { $0.reviewCount > 0 }).prefix(3))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                title: "Bulletproof Journal",
+                subtitle: open.isEmpty
+                    ? "No mistakes on record"
+                    : "\(open.count) open · \(open.filter { $0.reviewCount == 0 }.count) never revised",
+                symbol: "shield.lefthalf.filled"
+            )
+
+            if preview.isEmpty {
+                Text("Any dropped mark from a marked paper, or a mistake you write up yourself, lands here — so the same error does not cost you twice.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(preview) { entry in
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(SubjectTheme.color(for: entry.subject))
+                                .frame(width: 7, height: 7)
+                                .shadow(color: SubjectTheme.color(for: entry.subject).opacity(0.7), radius: 4)
+                            Text(entry.mistake)
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .lineLimit(1)
+                            Spacer(minLength: 6)
+                            if entry.reviewCount == 0 {
+                                Pill(text: "Unrevised", color: .studyAmber)
+                            }
+                            if let lost = entry.marksLost, lost > 0 {
+                                Text("\(lost)m")
+                                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                        .padding(.vertical, 6)
+                        if entry.id != preview.last?.id { Divider() }
+                    }
+                }
+                Text("Revising an entry in the Journal tab is what closes it.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(padding: 18)
     }
 }
 

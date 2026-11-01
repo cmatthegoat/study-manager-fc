@@ -872,6 +872,8 @@ struct MistakeEntry: Identifiable, Codable, Hashable {
     var questionRef: String = ""
     var marksLost: Int? = nil
     var source: MistakeSource = .manual
+    /// The paper an AI-flagged mistake came from, so "Q4" still means something months later.
+    var sourceTitle: String? = nil
     /// File name inside the career's Attachments folder. Nil when no evidence was attached.
     var attachment: String? = nil
     /// How many times this entry has been re-read as revision.

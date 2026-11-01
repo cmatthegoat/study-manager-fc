@@ -367,6 +367,28 @@ enum OpenRouterClient {
         return MarkingOutcome(result: result, backend: .openRouter, detail: reply.detail)
     }
 
+    /// Marks a single trivial question to prove a key and model work. A full past paper is a
+    /// poor thing to discover a broken key with, so this costs a fraction of a cent and
+    /// exercises the same path: request, status handling, reply decoding and JSON parsing.
+    static func test(key: String, model: String) async throws -> String {
+        let request = MarkingRequest(
+            subject: .other,
+            title: "Connection test",
+            totalMarks: 1,
+            answerText: "Q1: 2 + 2 = 4",
+            guidelinesText: "Q1 (1 mark): correct answer is 4.",
+            comments: ""
+        )
+        let started = Date()
+        let outcome = try await mark(request, key: key, model: model)
+        let seconds = max(0.1, Date().timeIntervalSince(started))
+        return String(
+            format: "Key works. \(outcome.result.totalAwarded)/\(outcome.result.totalOutOf) on a test question in %.1fs. %@",
+            seconds,
+            outcome.detail
+        )
+    }
+
     /// The catalogue, filtered to models that accept images. No key is needed for this call.
     static func models() async throws -> [OpenRouterModel] {
         var request = URLRequest(url: modelsURL)

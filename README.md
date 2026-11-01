@@ -35,7 +35,9 @@ revised" is visible rather than assumed. The top of the tab names the topic
 costing you the most marks and groups repeats by topic; entries can be revised,
 marked beaten, reopened, edited, filtered by subject or searched. Scans are
 stored in `JournalAttachments/` beside the save, and deleting an entry deletes
-its scan. The journal pays no cash or XP, so it cannot be farmed.
+its scan. Entries filed from a marked paper carry that paper's title, and the
+Dashboard shows the three mistakes that most need revising. The journal pays no
+cash or XP, so it cannot be farmed.
 
 **Cloud marking fallback.** Marking runs on Apple's on-device model by default.
 If that model is unavailable, or a paper outgrows its context window, OpenRouter

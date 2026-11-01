@@ -296,6 +296,7 @@ final class AppStore {
                         questionRef: "Q4",
                         marksLost: 2,
                         source: .aiMarked,
+                        sourceTitle: "2024 Trial Paper",
                         attachment: scan
                     )
                   ) else {
@@ -317,6 +318,7 @@ final class AppStore {
             let journalReload = AppStore(persistence: PersistenceStore(baseDirectory: tempDir))
             guard journalReload.mistakes.count == 1,
                   journalReload.mistakes[0].fix == "Raise the power before dividing",
+                  journalReload.mistakes[0].sourceTitle == "2024 Trial Paper",
                   journalReload.mistakes(for: .ext1Maths).count == 1 else {
                 print("SELF TEST FAIL: the journal did not survive a reload")
                 exit(1)

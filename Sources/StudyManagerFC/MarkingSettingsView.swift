@@ -14,6 +14,7 @@ struct MarkingSettingsCard: View {
     @State private var model = MarkingPreferences.model
     @State private var models: [OpenRouterModel] = []
     @State private var isLoadingModels = false
+    @State private var isTesting = false
     @State private var message: String?
     @State private var messageIsError = false
 
@@ -185,12 +186,19 @@ struct MarkingSettingsCard: View {
                 .bentoTint(.white)
                 .font(.system(size: 10, weight: .semibold))
                 .disabled(isLoadingModels)
+                Button(isTesting ? "Testing…" : "Test Key") {
+                    Task { await testKey() }
+                }
+                .buttonStyle(.bentoBordered)
+                .bentoTint(.secondary)
+                .font(.system(size: 10, weight: .semibold))
+                .disabled(isTesting || !hasKey || model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Spacer()
             }
             TextField("…or paste a model slug, e.g. google/gemini-2.5-flash", text: $model)
                 .bentoField()
                 .onSubmit { MarkingPreferences.model = model }
-            Text("Only models that accept images are listed, because a handwritten paper has to be sent as a scan. The list is fetched from OpenRouter, so it follows whatever they host today.")
+            Text("Only models that accept images are listed, because a handwritten paper has to be sent as a scan. The list is fetched from OpenRouter, so it follows whatever they host today. Test Key marks one trivial question so a broken key or model is caught before a real paper.")
                 .font(.system(size: 9))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -251,6 +259,32 @@ struct MarkingSettingsCard: View {
     }
 
     // MARK: - Key
+
+    /// Sends one one-mark question through the real client, which is the only honest way to
+    /// know the key, the model slug and the parsing all line up.
+    private func testKey() async {
+        guard let key = MarkingKeychain.read(), !key.isEmpty else {
+            messageIsError = true
+            message = "Save a key before testing it."
+            return
+        }
+        isTesting = true
+        message = nil
+        do {
+            let verdict = try await OpenRouterClient.test(key: key, model: model)
+            await MainActor.run {
+                isTesting = false
+                messageIsError = false
+                message = verdict
+            }
+        } catch {
+            await MainActor.run {
+                isTesting = false
+                messageIsError = true
+                message = error.localizedDescription
+            }
+        }
+    }
 
     private func saveKey() {
         guard MarkingKeychain.save(apiKey) else {

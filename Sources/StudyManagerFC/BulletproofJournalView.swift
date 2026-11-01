@@ -61,6 +61,7 @@ struct BulletproofJournalView: View {
             entry.fix,
             entry.questionRef,
             entry.subtopicName ?? "",
+            entry.sourceTitle ?? "",
             entry.subject.displayName
         ].joined(separator: " ").lowercased()
         return haystack.contains(needle)
@@ -392,6 +393,12 @@ struct BulletproofJournalView: View {
                     color: entry.source == .aiMarked ? .studyViolet : .studyMuted,
                     icon: entry.source.symbol
                 )
+                if let paper = entry.sourceTitle, !paper.isEmpty {
+                    Text("from \(paper)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 if entry.reviewCount > 0 {
                     Text("revised \(entry.reviewCount)×")
                         .font(.system(size: 9, weight: .medium))

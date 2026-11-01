@@ -476,6 +476,14 @@ struct MarkingView: View {
         )
     }
 
+    /// The paper as it should read in the journal: the title the user typed, or the subject's
+    /// name plus the date, so an entry is never just "Q4".
+    private var paperTitleForJournal: String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        return "\(subject.shortName) paper, \(Date().formatted(date: .abbreviated, time: .omitted))"
+    }
+
     private func journal(_ result: MarkingResult) {
         var filed = 0
         for question in result.questions where question.awarded < question.outOf {
@@ -484,7 +492,8 @@ struct MarkingView: View {
                 mistake: "\(question.question): \(question.reason)",
                 questionRef: question.question,
                 marksLost: question.outOf - question.awarded,
-                source: .aiMarked
+                source: .aiMarked,
+                sourceTitle: paperTitleForJournal
             )
             if store.addMistake(entry) != nil { filed += 1 }
         }
