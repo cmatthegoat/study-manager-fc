@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImageIO
 import PDFKit
 import Vision
 
@@ -22,6 +23,31 @@ enum PaperText {
                 "No readable text was found in \(name). Try a sharper scan or type the answer in."
             }
         }
+    }
+
+    /// The longest edge kept when a scan is sent to a cloud model. Larger than this costs
+    /// tokens without helping it read handwriting, which is legible long before 1600px.
+    private static let maximumImageEdge = 1_600
+
+    /// Re-encodes a PNG or JPEG as a compact JPEG payload for a cloud marker. PDFs return
+    /// nil: their text is extracted instead, and a rasterised page would cost far more.
+    static func imagePayload(from url: URL) -> MarkingImage? {
+        guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumImageEdge,
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let representation = NSBitmapImageRep(cgImage: thumbnail)
+        guard let data = representation.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
+            return nil
+        }
+        return MarkingImage(data: data, mimeType: "image/jpeg")
     }
 
     static func text(from url: URL) throws -> String {

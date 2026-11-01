@@ -12,6 +12,12 @@ struct StudyManagerFCApp: App {
             let path = CommandLine.arguments.count > flag + 1 ? CommandLine.arguments[flag + 1] : nil
             Self.runMarkingCheck(path: path)
         }
+        // A wiring check for the cloud marker: fetches OpenRouter's catalogue without a key,
+        // which proves the endpoint, the decoding and the image filter all work. It never
+        // sends a paper, so it costs nothing.
+        if CommandLine.arguments.contains("--verify-openrouter") {
+            Self.runOpenRouterCheck()
+        }
         // A packaging check: the game database lives beside the app, and this proves the
         // shipped bundle can find and decode it without opening a window.
         if CommandLine.arguments.contains("--verify-database") {
@@ -34,6 +40,30 @@ struct StudyManagerFCApp: App {
 }
 
 extension StudyManagerFCApp {
+    /// Lists the image-capable models OpenRouter is hosting right now, then exits. The key
+    /// itself is never printed — only whether one is stored.
+    fileprivate static func runOpenRouterCheck() {
+        var finished = false
+        Task {
+            do {
+                let models = try await OpenRouterClient.models()
+                print("openrouter image models: \(models.count)")
+                for model in models.prefix(6) {
+                    print("  \(model.id) — \(model.displayName)")
+                }
+            } catch {
+                print("openrouter models failed: \(error.localizedDescription)")
+            }
+            print("key stored: \(MarkingKeychain.hasKey)  preference: \(MarkingPreferences.preference.rawValue)  model: \(MarkingPreferences.model.isEmpty ? "(none)" : MarkingPreferences.model)")
+            print("marking ready: \(MarkingService.isReady)")
+            finished = true
+        }
+        while !finished {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        exit(0)
+    }
+
     /// Runs the marking diagnostic and exits. Waiting on the model needs the main run loop
     /// alive, so this pumps it rather than blocking on a semaphore.
     fileprivate static func runMarkingCheck(path: String?) {

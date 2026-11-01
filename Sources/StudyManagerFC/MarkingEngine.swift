@@ -31,6 +31,8 @@ struct MarkingResult: Hashable {
 }
 
 /// Everything a marking pass needs: what was set, what the student wrote, and the rubric.
+/// Scans ride along as images for cloud models that can read them; the on-device model uses
+/// the text Vision extracted from the same files.
 struct MarkingRequest {
     var subject: StudySubject
     var title: String
@@ -38,6 +40,7 @@ struct MarkingRequest {
     var answerText: String
     var guidelinesText: String
     var comments: String
+    var answerImages: [MarkingImage] = []
 }
 
 enum MarkingError: LocalizedError {
@@ -98,20 +101,97 @@ enum MarkingService {
         #endif
     }
 
-    static func mark(_ request: MarkingRequest) async throws -> MarkingResult {
-        guard availability.isAvailable else {
-            if case .unavailable(let reason) = availability { throw MarkingError.notEnabled(reason) }
-            throw MarkingError.systemTooOld
-        }
-        let answer = request.answerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !answer.isEmpty else { throw MarkingError.noAnswer }
+    /// True when OpenRouter is usable: a key in the Keychain and a model chosen.
+    static var openRouterReady: Bool {
+        MarkingKeychain.hasKey && !MarkingPreferences.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
+    /// Whether a paper can be marked at all with the current preference and setup.
+    static var isReady: Bool {
+        switch MarkingPreferences.preference {
+        case .automatic: availability.isAvailable || openRouterReady
+        case .onDevice: availability.isAvailable
+        case .openRouter: openRouterReady
+        }
+    }
+
+    /// Why marking is not ready, phrased for the banner above the answer box.
+    static var readinessNote: String {
+        switch MarkingPreferences.preference {
+        case .automatic:
+            if availability.isAvailable { return "Apple Intelligence marks on this Mac. OpenRouter is the fallback if it cannot take a paper." }
+            if openRouterReady { return "The on-device model is not available here, so papers are being marked through OpenRouter." }
+            if case .unavailable(let reason) = availability { return reason }
+            return "Automatic marking is unavailable right now."
+        case .onDevice:
+            if case .unavailable(let reason) = availability { return reason }
+            return "Papers are marked on this Mac only. Nothing is sent to a server."
+        case .openRouter:
+            return openRouterReady
+                ? "Every paper is sent to OpenRouter using your own key."
+                : "Add an OpenRouter key and model in Marking Settings to mark through the cloud."
+        }
+    }
+
+    /// Runs a marking pass with the chosen backend and reports which one answered.
+    static func run(_ request: MarkingRequest) async throws -> MarkingOutcome {
+        let answer = request.answerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty || !request.answerImages.isEmpty else { throw MarkingError.noAnswer }
+
+        switch MarkingPreferences.preference {
+        case .openRouter:
+            return try await runInCloud(request)
+        case .onDevice:
+            guard availability.isAvailable else {
+                if case .unavailable(let reason) = availability { throw MarkingError.notEnabled(reason) }
+                throw MarkingError.systemTooOld
+            }
+            return try await runOnDeviceOutcome(request, answer: answer)
+        case .automatic:
+            if availability.isAvailable {
+                do {
+                    return try await runOnDeviceOutcome(request, answer: answer)
+                } catch {
+                    // A paper too long for the on-device window is exactly the case the
+                    // fallback exists for, so a configured OpenRouter takes it instead.
+                    guard openRouterReady else { throw error }
+                    return try await runInCloud(request)
+                }
+            }
+            guard openRouterReady else {
+                if case .unavailable(let reason) = availability { throw MarkingError.notEnabled(reason) }
+                throw MarkingError.systemTooOld
+            }
+            return try await runInCloud(request)
+        }
+    }
+
+    /// Kept for callers that only want the marks, such as the marking diagnostic.
+    static func mark(_ request: MarkingRequest) async throws -> MarkingResult {
+        try await run(request).result
+    }
+
+    private static func runOnDeviceOutcome(_ request: MarkingRequest, answer: String) async throws -> MarkingOutcome {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
-            return try await runOnDevice(request, answer: answer)
+            let result = try await runOnDevice(request, answer: answer)
+            return MarkingOutcome(
+                result: result,
+                backend: .onDevice,
+                detail: "Marked on this Mac — no bytes left the machine."
+            )
         }
         #endif
         throw MarkingError.systemTooOld
+    }
+
+    private static func runInCloud(_ request: MarkingRequest) async throws -> MarkingOutcome {
+        guard let key = MarkingKeychain.read(), !key.isEmpty else { throw OpenRouterError.missingKey }
+        let model = MarkingPreferences.model
+        guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw OpenRouterError.missingModel
+        }
+        return try await OpenRouterClient.mark(request, key: key, model: model)
     }
 
     #if canImport(FoundationModels)
@@ -119,40 +199,13 @@ enum MarkingService {
     private static func runOnDevice(_ request: MarkingRequest, answer: String) async throws -> MarkingResult {
         // A whole paper plus a rubric can outrun the on-device context, so both sides are
         // trimmed with a note rather than silently dropped.
-        let guidelines = clipped(request.guidelinesText, limit: 6_000)
-        let comments = clipped(request.comments, limit: 1_500)
-        let paper = clipped(answer, limit: 7_000)
+        let limits = MarkingPrompts.Limits.onDevice
+        let guidelines = MarkingPrompts.clipped(request.guidelinesText, limit: limits.guidelines)
+        let comments = MarkingPrompts.clipped(request.comments, limit: limits.comments)
+        let paper = MarkingPrompts.clipped(answer, limit: limits.paper)
 
-        let instructions = """
-        You are a strict but fair marker for an Australian NSW HSC paper in \(request.subject.displayName). \
-        Mark only against the marking guidelines and comments when they are provided, and never invent criteria. \
-        When no guidelines are supplied, work out the correct answer or method yourself and mark the work \
-        against it: a correct answer with working earns every mark for that question, and sound working \
-        still earns method marks when the final answer is wrong. Do not dock a fully correct answer. \
-        Award whole marks only. Partial credit is allowed when part of the working is right.
-
-        Reply with JSON only, in exactly this shape, with no prose before or after it:
-        {"questions":[{"question":"Q1(a)","awarded":2,"outOf":3,"reason":"one sentence"}],"feedback":"two sentences of overall feedback"}
-        """
-
-        let prompt = """
-        Total marks for this paper: \(request.totalMarks).
-
-        MARKING GUIDELINES
-        \(guidelines.isEmpty ? "(none supplied — solve each question yourself and mark my work against the correct answer)" : guidelines)
-
-        MARKER'S COMMENTS
-        \(comments.isEmpty ? "(none)" : comments)
-
-        STUDENT'S ANSWER
-        \(paper)
-
-        Mark every question you can see in the answer. "outOf" is the marks available for that \
-        question, taken from the guidelines when they state it. The outOf values must sum to \
-        exactly \(request.totalMarks): if the guidelines do not give a share per question, divide \
-        the total across the questions you found. Keep each reason to one sentence. When there are \
-        no guidelines, put the correct answer in the reason so I can check your marking.
-        """
+        let instructions = MarkingPrompts.instructions(subject: request.subject)
+        let prompt = MarkingPrompts.userPrompt(request, guidelines: guidelines, comments: comments, paper: paper)
 
         let session = LanguageModelSession(instructions: instructions)
         let response: String
@@ -164,12 +217,6 @@ enum MarkingService {
         return try parse(response)
     }
     #endif
-
-    private static func clipped(_ text: String, limit: Int) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > limit else { return trimmed }
-        return String(trimmed.prefix(limit)) + "\n…(truncated)"
-    }
 
     // MARK: - Parsing
 

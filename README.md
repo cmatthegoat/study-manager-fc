@@ -14,7 +14,7 @@ the last revision here that contained it is `7d973ec`.
 ## What's in it
 
 **macOS sections** — Dashboard, Study Log, Subjects, Todos, Squad, Transfers,
-Champions League, Exams, AI Marking.
+Champions League, Exams, Journal, AI Marking.
 
 **Automatic marking.** The AI Marking tab marks a past paper against a rubric with
 Apple's on-device model, so nothing is uploaded, there is no account and no cost
@@ -25,6 +25,30 @@ reason, are shown as a draft for review, and are saved into the assessment log
 with one button. It needs macOS 26 or later on an Apple silicon Mac with Apple
 Intelligence switched on; the tab explains what is missing otherwise, and the
 macOS 14 minimum still builds and runs everything else.
+
+**Bulletproof Journal.** Every mistake worth never repeating, in one place per
+subject — written up by hand, or filed straight from an AI marking pass, where
+each question that dropped a mark becomes an entry carrying the marker's reason,
+the question reference and the marks lost. An entry holds the fix, an optional
+**PNG / JPEG / PDF** scan of the working, and a revision count, so "never
+revised" is visible rather than assumed. The top of the tab names the topic
+costing you the most marks and groups repeats by topic; entries can be revised,
+marked beaten, reopened, edited, filtered by subject or searched. Scans are
+stored in `JournalAttachments/` beside the save, and deleting an entry deletes
+its scan. The journal pays no cash or XP, so it cannot be farmed.
+
+**Cloud marking fallback.** Marking runs on Apple's on-device model by default.
+If that model is unavailable, or a paper outgrows its context window, OpenRouter
+can mark it instead using your own key: expand **Marking Settings** on the AI
+Marking tab, paste a key and choose a model. The marker itself is a one-click
+menu beside *Mark Paper* — **Automatic**, **On-device only**, or **OpenRouter** —
+and the result card always says which marker answered. The key is kept in the
+login Keychain, never in the career file or this repository. With OpenRouter
+selected the paper's text and any scans are sent to a third party and paid for
+by your own credit; the settings card says so plainly. The model list is fetched
+from OpenRouter and filtered to models that accept images, because a handwritten
+page has to be sent as a scan (PDFs are still read locally with Vision and sent
+as text).
 
 **Marks charts.** The Exams tab charts assessments *and* the work you log through
 the timer: homework, past papers and exam-style questions each have marks over
@@ -74,8 +98,10 @@ swift run StudyManagerFC
 Useful entry points:
 
 ```bash
-swift run StudyManagerFC --self-test        # round-trips a career in a temp dir
-swift run StudyManagerFC --verify-database  # proves the bundled DB decodes
+swift run StudyManagerFC --self-test         # round-trips a career in a temp dir
+swift run StudyManagerFC --verify-database   # proves the bundled DB decodes
+swift run StudyManagerFC --verify-marking    # marks a tiny paper with the on-device model
+swift run StudyManagerFC --verify-openrouter # lists image-capable OpenRouter models (no key needed)
 Scripts/package-app.sh                      # writes dist/StudyManagerFC.app
 Scripts/package-dmg.sh                      # writes dist/StudyManagerFC.dmg (drag-to-Applications image)
 ```

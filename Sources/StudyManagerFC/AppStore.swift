@@ -328,6 +328,39 @@ final class AppStore {
                 exit(1)
             }
 
+            // OpenRouter wiring: the request the cloud marker would send carries the chosen
+            // model, the shared prompt, the JSON-only response format and any scan as a
+            // base64 data URL — and never the key.
+            let cloudRequest = MarkingRequest(
+                subject: .chemistry,
+                title: "Cloud paper",
+                totalMarks: 12,
+                answerText: "Q1: n = m/M = 4.0/16 = 0.25 mol",
+                guidelinesText: "",
+                comments: "",
+                answerImages: [MarkingImage(data: Data([0xFF, 0xD8, 0xFF]), mimeType: "image/jpeg")]
+            )
+            guard let body = try? OpenRouterClient.requestBody(cloudRequest, model: "vendor/model"),
+                  body["model"] as? String == "vendor/model",
+                  (body["response_format"] as? [String: Any])?["type"] as? String == "json_object",
+                  let messages = body["messages"] as? [[String: Any]],
+                  messages.count == 2,
+                  let parts = messages[1]["content"] as? [[String: Any]],
+                  parts.contains(where: {
+                      ($0["image_url"] as? [String: Any])?["url"] as? String == "data:image/jpeg;base64,/9j/"
+                  }),
+                  let encoded = try? JSONSerialization.data(withJSONObject: body),
+                  !String(decoding: encoded, as: UTF8.self).contains("sk-or-") else {
+                print("SELF TEST FAIL: the OpenRouter request body was not built as expected")
+                exit(1)
+            }
+            guard OpenRouterError.message(forStatus: 402, server: "").contains("out of credit"),
+                  OpenRouterError.message(forStatus: 401, server: "").contains("rejected"),
+                  OpenRouterError.message(forStatus: 404, server: "").contains("model") else {
+                print("SELF TEST FAIL: OpenRouter failures do not explain themselves")
+                exit(1)
+            }
+
             // Inline directives: `p2 #Ext 1 Maths - Vectors: do 3.2`
             let parsed = TodoInput.parse("p2 #Ext 1 Maths - Vectors: do 3.2", subtopics: [topic])
             guard parsed.subject == .ext1Maths, parsed.subtopicName == "Vectors", parsed.priority == 2, parsed.title == "do 3.2" else {
