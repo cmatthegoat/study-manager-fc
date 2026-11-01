@@ -56,6 +56,20 @@ extension StudyManagerFCApp {
             }
             print("key stored: \(MarkingKeychain.hasKey)  preference: \(MarkingPreferences.preference.rawValue)  model: \(MarkingPreferences.model.isEmpty ? "(none)" : MarkingPreferences.model)")
             print("marking ready: \(MarkingService.isReady)")
+
+            // With a key and model stored, mark one trivial question so the whole cloud path
+            // — auth, status handling, reply decoding, JSON parsing — is proven end to end.
+            // The key itself is never printed. This costs a fraction of a cent.
+            if let key = MarkingKeychain.read(), !key.isEmpty, !MarkingPreferences.model.isEmpty {
+                do {
+                    let verdict = try await OpenRouterClient.test(key: key, model: MarkingPreferences.model)
+                    print("key test: \(verdict)")
+                } catch {
+                    print("key test failed: \(error.localizedDescription)")
+                }
+            } else {
+                print("key test skipped: no key or model stored, so nothing was sent.")
+            }
             finished = true
         }
         while !finished {

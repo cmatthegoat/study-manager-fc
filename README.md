@@ -103,7 +103,7 @@ Useful entry points:
 swift run StudyManagerFC --self-test         # round-trips a career in a temp dir
 swift run StudyManagerFC --verify-database   # proves the bundled DB decodes
 swift run StudyManagerFC --verify-marking    # marks a tiny paper with the on-device model
-swift run StudyManagerFC --verify-openrouter # lists image-capable OpenRouter models (no key needed)
+swift run StudyManagerFC --verify-openrouter # lists image-capable models; tests the key if one is stored
 Scripts/package-app.sh                      # writes dist/StudyManagerFC.app
 Scripts/package-dmg.sh                      # writes dist/StudyManagerFC.dmg (drag-to-Applications image)
 ```
