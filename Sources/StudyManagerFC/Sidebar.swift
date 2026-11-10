@@ -8,6 +8,9 @@ struct AppSidebar: View {
     @Binding var selection: MainSection
     /// Icon-only rail: the same navigation with the labels, theme menus and level card gone.
     var compact: Bool = false
+    /// The compact rail hides the theme menus, so this popover is the only way back out of
+    /// the icon rail. Without it, choosing that layout stranded you in it.
+    @State private var showingThemePopover = false
 
     private var club: Club? { store.managedClub }
 
@@ -31,7 +34,10 @@ struct AppSidebar: View {
 
             Spacer(minLength: 12)
             if compact {
-                compactLevel
+                VStack(spacing: 6) {
+                    compactLevel
+                    themeButton
+                }
             } else {
                 ThemeControls()
                     .padding(.horizontal, 2)
@@ -119,6 +125,33 @@ struct AppSidebar: View {
         }
         .buttonStyle(.plain)
         .help(section.title)
+    }
+
+    /// Palette and layout, packed into one button so the icon rail can still change either.
+    private var themeButton: some View {
+        Button {
+            showingThemePopover.toggle()
+        } label: {
+            Image(systemName: "paintpalette.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.72))
+                .frame(width: 34, height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.045))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.09), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Palette and layout")
+        .popover(isPresented: $showingThemePopover, arrowEdge: .trailing) {
+            ThemeControls()
+                .padding(14)
+                .environment(store)
+        }
     }
 
     /// What survives of the foot of the rail when it is only icons: the level and its bar.
