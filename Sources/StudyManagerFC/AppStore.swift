@@ -143,6 +143,7 @@ final class AppStore {
         // view asks what a player costs.
         PlayerPricing.manualRise = max(0, state.playerPriceRise)
         TeamTheme.preset = themePreset
+        TeamTheme.paletteOverride = paletteClub
         TeamTheme.club = managedClub
         SubjectTheme.apply(state.subjectColors)
     }
@@ -1140,14 +1141,35 @@ final class AppStore {
             // Income has to keep pace with the prices those rises reach, and the palette
             // preset belongs to the career rather than a transient setting.
             raiser.setThemePreset(.deep)
+            raiser.setLayoutPreset(.topBar)
             AppStore.flushPendingSaves()
+            let storedTheme = try raiseStore.load()
             guard GameRules.startingCash == 2_500,
                   GameState.fresh().clubCash == GameRules.startingCash,
                   StudyReward.calculate(kind: .homework, subject: .ext1Maths, minutes: 90, marksObtained: nil, marksTotal: nil).cash >= 2_400,
-                  ThemePreset.allCases.count == 5,
+                  ThemePreset.allCases.count == 7,
+                  ThemePreset.LayoutPreset.allCases.count == 3,
                   raiser.themePreset == .deep,
-                  (try raiseStore.load())?.themePreset == ThemePreset.deep.rawValue else {
+                  raiser.layoutPreset == .topBar,
+                  storedTheme?.themePreset == ThemePreset.deep.rawValue,
+                  storedTheme?.layoutPreset == ThemePreset.LayoutPreset.topBar.rawValue else {
                 print("SELF TEST FAIL: cash income, starting cash or the theme preset are wrong")
+                exit(1)
+            }
+
+            // Any team's colours can be worn, whatever club is managed, and it sticks.
+            let otherClubID = ClubDatabase.all.first { $0.id != raiser.state.managedClubID }?.id ?? "arsenal"
+            raiser.setPaletteClub(otherClubID)
+            AppStore.flushPendingSaves()
+            guard TeamTheme.paletteOverride?.id == otherClubID,
+                  (try raiseStore.load())?.paletteClubID == otherClubID,
+                  TeamTheme.primary != TeamTheme.secondary else {
+                print("SELF TEST FAIL: another team's palette could not be worn or saved")
+                exit(1)
+            }
+            raiser.setThemePreset(.club)
+            guard TeamTheme.paletteOverride == nil else {
+                print("SELF TEST FAIL: choosing a style did not return the palette to the managed club")
                 exit(1)
             }
 
@@ -1195,7 +1217,7 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, handwritten pages turned into page images, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, five club-relative theme presets, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review")
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, handwritten pages turned into page images, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, seven club-relative styles plus every team's own palette, and three layouts, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -2346,6 +2368,36 @@ final class AppStore {
         guard hasCareer else { return }
         var draft = state
         draft.themePreset = preset.rawValue
+        // Choosing a style means going back to the managed club's own colours.
+        draft.paletteClubID = nil
+        commit(draft)
+    }
+
+    /// The club whose colours the board wears, when it is not the managed club.
+    var paletteClub: Club? {
+        guard let id = state.paletteClubID else { return nil }
+        return ClubDatabase.club(for: id)
+    }
+
+    /// Wears another team's colours whatever club is being managed. Passing nil returns the
+    /// palette to the managed club's own colour, still through the chosen style.
+    func setPaletteClub(_ clubID: String?) {
+        guard hasCareer else { return }
+        guard clubID == nil || ClubDatabase.club(for: clubID!) != nil else { return }
+        var draft = state
+        draft.paletteClubID = clubID
+        commit(draft)
+    }
+
+    /// The arrangement of the board, independent of the palette.
+    var layoutPreset: ThemePreset.LayoutPreset {
+        ThemePreset.LayoutPreset(rawValue: state.layoutPreset) ?? .sidebar
+    }
+
+    func setLayoutPreset(_ preset: ThemePreset.LayoutPreset) {
+        guard hasCareer else { return }
+        var draft = state
+        draft.layoutPreset = preset.rawValue
         commit(draft)
     }
 
@@ -2983,6 +3035,7 @@ final class AppStore {
         SubjectTheme.apply(draft.subjectColors)
         PlayerPricing.manualRise = max(0, draft.playerPriceRise)
         TeamTheme.preset = ThemePreset(rawValue: draft.themePreset) ?? .club
+        TeamTheme.paletteOverride = draft.paletteClubID.flatMap { ClubDatabase.club(for: $0) }
         state = draft   // the UI updates immediately
 
         // Write to disk off the main thread. The serial queue keeps writes in order and stops

@@ -1748,6 +1748,11 @@ struct GameState: Codable {
     var lastPriceRiseAt: Date? = nil
     /// The chosen colour preset. Every preset is a transformation of the club's own colours.
     var themePreset: String = ThemePreset.club.rawValue
+    /// The club whose colours the board wears, when it is not the club being managed. Nil
+    /// means the palette follows the club you manage.
+    var paletteClubID: String? = nil
+    /// The chosen arrangement — rail down the left, icon-only rail, or sections across the top.
+    var layoutPreset: String = ThemePreset.LayoutPreset.sidebar.rawValue
     /// Tests and exams with their marks, weightings, class ranks and topic results.
     var assessments: [Assessment] = []
     /// Optional so a career saved before formations existed still opens as a 4-3-3.
@@ -1797,6 +1802,8 @@ struct GameState: Codable {
         case lastPriceRisePercent
         case lastPriceRiseAt
         case themePreset
+        case layoutPreset
+        case paletteClubID
     }
 
     static func fresh() -> GameState {
@@ -1885,6 +1892,8 @@ extension GameState {
         lastPriceRisePercent = try container.decodeIfPresent(Double.self, forKey: .lastPriceRisePercent) ?? 0
         lastPriceRiseAt = try container.decodeIfPresent(Date.self, forKey: .lastPriceRiseAt)
         themePreset = try container.decodeIfPresent(String.self, forKey: .themePreset) ?? ThemePreset.club.rawValue
+        layoutPreset = try container.decodeIfPresent(String.self, forKey: .layoutPreset) ?? ThemePreset.LayoutPreset.sidebar.rawValue
+        paletteClubID = try container.decodeIfPresent(String.self, forKey: .paletteClubID)
     }
 }
 

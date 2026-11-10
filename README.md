@@ -97,10 +97,12 @@ Player prices are the rating curve with a 50% premium and then another 35% on to
 just over double the bare curve. The **Market prices** card on the Transfer Market tab
 lets you raise every price by hand: a percentage stacks on the current prices, is saved
 with the career and can never be undone — a negative or zero percentage is refused, and
-the total is capped at ten times the standard. The sidebar's **Theme** menu picks the
-palette — Club colours, Deep, Bright, Pastel or Tinted mono — and every preset is a
-transformation of the club's own two colours, so the board always belongs to the club
-you manage. A club never
+the total is capped at ten times the standard. The **PALETTE** menu offers seven styles — Club colours, Deep, Bright, Pastel, Tinted
+mono, Slate and Ember — each a transformation of the managed club's own colours, and
+then every team in the game, so Real Madrid's colours can be worn while managing
+Barcelona. **LAYOUT** switches the board between the sidebar, an icon-only rail and a
+row of sections across the top; palette and layout are saved with the career and are
+independent of each other. A club never
 counters below the bid it is answering: a bid within a whisker of the asking price
 closes the deal at the bid rather than producing a lower "counter".
 

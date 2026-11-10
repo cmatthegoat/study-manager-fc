@@ -148,6 +148,8 @@ enum ThemePreset: String, CaseIterable, Identifiable {
     case bright
     case pastel
     case mono
+    case slate
+    case ember
 
     var id: String { rawValue }
 
@@ -158,6 +160,26 @@ enum ThemePreset: String, CaseIterable, Identifiable {
         case .bright: "Bright"
         case .pastel: "Pastel"
         case .mono: "Tinted mono"
+        case .slate: "Slate"
+        case .ember: "Ember"
+        }
+    }
+
+    /// How the board is arranged. Independent of the palette, so any colour can be worn
+    /// with any layout.
+    enum LayoutPreset: String, CaseIterable, Identifiable {
+        case sidebar
+        case iconRail
+        case topBar
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .sidebar: "Sidebar"
+            case .iconRail: "Icon rail"
+            case .topBar: "Top bar"
+            }
         }
     }
 
@@ -179,33 +201,59 @@ enum ThemePreset: String, CaseIterable, Identifiable {
         case .mono:
             hsv.s = hsv.s * 0.12
             hsv.v = max(hsv.v, 0.8)
+        case .slate:
+            // Cool and muted: the club's hue survives, the shout does not.
+            hsv.s = hsv.s * 0.30
+            hsv.v = min(max(hsv.v * 0.86, 0.55), 0.95)
+        case .ember:
+            // A few degrees warmer and a touch richer, still the club's own colour.
+            hsv.h = (hsv.h + 10).truncatingRemainder(dividingBy: 360)
+            hsv.s = min(1, hsv.s * 1.05)
+            hsv.v = min(1, hsv.v * 1.02)
         }
         return hsv.rgb
     }
+}
+
+/// One entry in the palette menu: either a style preset applied to the managed club's own
+/// colours, or another team's colours worn as they are.
+enum PaletteChoice: Hashable {
+    case style(ThemePreset)
+    case team(String)
 }
 
 enum TeamTheme {
     static var club: Club?
     /// The career's chosen preset. Every accent in the app is read through it.
     static var preset: ThemePreset = .club
+    /// Another club's colours, worn instead of the managed club's. Nil means the palette
+    /// follows the club you manage; set, it is the club whose colours the board wears, and
+    /// the style presets stand aside so that palette shows as it is.
+    static var paletteOverride: Club?
 
     static var hasClub: Bool { club != nil }
 
+    /// The club whose colours the board is actually wearing.
+    static var paletteSource: Club? { paletteOverride ?? club }
+
     /// Primary accent, brightened enough to read on the near-black canvas and then run
     /// through the chosen preset.
-    static var primary: Color { accent(club?.primaryHex) ?? Color(hex: "2FBF71") }
+    static var primary: Color { accent(paletteSource?.primaryHex) ?? Color(hex: "2FBF71") }
 
     /// Secondary accent, brightened the same way.
-    static var secondary: Color { accent(club?.secondaryHex) ?? Color(hex: "1FA8A0") }
+    static var secondary: Color { accent(paletteSource?.secondaryHex) ?? Color(hex: "1FA8A0") }
 
     /// Whether the primary is bright enough to need dark text on top of it.
-    static var primaryIsLight: Bool { lifted(club?.primaryHex)?.isLight ?? false }
+    static var primaryIsLight: Bool { lifted(paletteSource?.primaryHex)?.isLight ?? false }
 
-    static var secondaryIsLight: Bool { lifted(club?.secondaryHex)?.isLight ?? false }
+    static var secondaryIsLight: Bool { lifted(paletteSource?.secondaryHex)?.isLight ?? false }
 
     private static func lifted(_ hex: String?) -> RGB? {
         guard let hex, let rgb = RGB(hex) else { return nil }
-        return preset.apply(to: rgb.liftedForAccent)
+        let base = rgb.liftedForAccent
+        // A club's own palette is worn exactly as that club wears it; the styles only shape
+        // the colours of the club being managed.
+        return paletteOverride == nil ? preset.apply(to: base) : base
     }
 
     private static func accent(_ hex: String?) -> Color? { lifted(hex)?.color }

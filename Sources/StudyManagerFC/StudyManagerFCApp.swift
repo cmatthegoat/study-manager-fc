@@ -209,26 +209,9 @@ struct MainTabView: View {
     private static let requiredResetConfirmations = 5
 
     var body: some View {
-        HStack(spacing: 12) {
-            AppSidebar(selection: $selection)
-
-            VStack(spacing: 0) {
-                // The page-level actions sit top-right, level with each screen's title.
-                HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    TransferOffersButton()
-                    changeTeamButton
-                    resetButton
-                }
-                .padding(.horizontal, 4)
-                .padding(.top, 2)
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(12)
-        .background(AppBackground())
+        layoutBody
+            .padding(12)
+            .background(AppBackground())
         .sheet(isPresented: $showingChangeTeam) {
             ChangeTeamSheet()
                 .environment(store)
@@ -264,6 +247,119 @@ struct MainTabView: View {
         } message: {
             Text("This permanently deletes your club, squad, trophies, Club Cash and study history, then returns you to club selection. Confirm \(resetConfirmationsLeft) more time\(resetConfirmationsLeft == 1 ? "" : "s") to continue.")
         }
+    }
+
+    /// The chosen arrangement. The rail layouts keep the page actions top-right; the top bar
+    /// carries them, and the theme controls, in the bar itself.
+    @ViewBuilder
+    private var layoutBody: some View {
+        switch store.layoutPreset {
+        case .sidebar, .iconRail:
+            HStack(spacing: 12) {
+                AppSidebar(selection: $selection, compact: store.layoutPreset == .iconRail)
+                VStack(spacing: 0) {
+                    pageActions
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        case .topBar:
+            VStack(spacing: 10) {
+                topBar
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// The page-level actions sit top-right, level with each screen's title.
+    private var pageActions: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            TransferOffersButton()
+            changeTeamButton
+            resetButton
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 2)
+    }
+
+    /// The top-bar layout: identity, theme controls and page actions on the first row, every
+    /// section as a pill beneath, so the board reads as one wide page.
+    private var topBar: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                if let club = store.managedClub {
+                    ClubBadge(club: club, size: 26)
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text((store.managedClub?.shortName ?? "Study FC").uppercased())
+                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .tracking(1.1)
+                    Text("Season \(store.state.seasonNumber) · Lv \(store.level)")
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                ThemeControls(vertical: false, menuWidth: 132)
+                TransferOffersButton()
+                changeTeamButton
+                resetButton
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(MainSection.allCases) { section in
+                        topBarButton(section)
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+        }
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Neon.panel.opacity(0.86))
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Neon.border, lineWidth: 1)
+        )
+        .shadow(color: Neon.accent.opacity(0.16), radius: 18)
+    }
+
+    private func topBarButton(_ section: MainSection) -> some View {
+        let isSelected = selection == section
+        return Button {
+            selection = section
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: section.systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(section.title)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.55))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background {
+                if isSelected {
+                    Capsule().fill(
+                        LinearGradient(
+                            colors: [Neon.accent.opacity(0.55), Neon.accentAlt.opacity(0.32)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .overlay(Capsule().stroke(Neon.accent.opacity(0.75), lineWidth: 1))
+                    .shadow(color: Neon.accent.opacity(0.5), radius: 8)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(section.title)
     }
 
     /// Changing club keeps the career and starts a new season, so it lives beside Reset in

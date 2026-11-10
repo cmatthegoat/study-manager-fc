@@ -6,6 +6,8 @@ import SwiftUI
 struct AppSidebar: View {
     @Environment(AppStore.self) private var store
     @Binding var selection: MainSection
+    /// Icon-only rail: the same navigation with the labels, theme menus and level card gone.
+    var compact: Bool = false
 
     private var club: Club? { store.managedClub }
 
@@ -28,11 +30,17 @@ struct AppSidebar: View {
             }
 
             Spacer(minLength: 12)
-            themePicker
-            levelCard
+            if compact {
+                compactLevel
+            } else {
+                ThemeControls()
+                    .padding(.horizontal, 2)
+                    .padding(.bottom, 12)
+                levelCard
+            }
         }
         .padding(14)
-        .frame(width: 226)
+        .frame(width: compact ? 74 : 226)
         .frame(maxHeight: .infinity)
         .background {
             GlassBackdrop(cornerRadius: 24, tint: Neon.panel.opacity(0.45), showsRim: false) {
@@ -51,22 +59,25 @@ struct AppSidebar: View {
     private var brand: some View {
         HStack(spacing: 10) {
             if let club {
-                ClubBadge(club: club, size: 36)
+                ClubBadge(club: club, size: compact ? 30 : 36)
             } else {
                 Circle()
                     .fill(Neon.panel)
-                    .frame(width: 36, height: 36)
+                    .frame(width: compact ? 30 : 36, height: compact ? 30 : 36)
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(club?.shortName.uppercased() ?? "STUDY FC")
-                    .font(.system(size: 11, weight: .black, design: .rounded))
-                    .tracking(1.1)
-                Text("Season \(store.state.seasonNumber) · Lv \(store.level)")
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
+            if !compact {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(club?.shortName.uppercased() ?? "STUDY FC")
+                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .tracking(1.1)
+                    Text("Season \(store.state.seasonNumber) · Lv \(store.level)")
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
     }
 
     private func navButton(_ section: MainSection) -> some View {
@@ -78,14 +89,17 @@ struct AppSidebar: View {
                 Image(systemName: section.systemImage)
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 18)
-                Text(section.title)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
+                if !compact {
+                    Text(section.title)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
             }
             .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.55))
-            .padding(.horizontal, 11)
+            .padding(.horizontal, compact ? 0 : 11)
             .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
             .background {
                 if isSelected {
                     let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
@@ -107,24 +121,21 @@ struct AppSidebar: View {
         .help(section.title)
     }
 
-    /// The palette preset. Every preset keeps the board in the club's own two colours.
-    private var themePicker: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("THEME")
-                .font(.system(size: 8, weight: .black, design: .rounded))
-                .tracking(1)
-                .foregroundStyle(.secondary)
-            BentoMenu(
-                selection: Binding(
-                    get: { store.themePreset },
-                    set: { store.setThemePreset($0) }
-                ),
-                options: ThemePreset.allCases.map { BentoOption($0.displayName, value: $0) },
-                width: 190
-            )
+    /// What survives of the foot of the rail when it is only icons: the level and its bar.
+    private var compactLevel: some View {
+        VStack(spacing: 6) {
+            Text("Lv \(store.level)")
+                .font(.system(size: 9, weight: .black, design: .rounded))
+                .monospacedDigit()
+            ReadinessBar(progress: levelProgress, tint: Neon.accent, height: 4)
+                .frame(width: 34)
         }
-        .padding(.horizontal, 2)
-        .padding(.bottom, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.045))
+        )
     }
 
     private var levelCard: some View {
@@ -155,5 +166,99 @@ struct AppSidebar: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.white.opacity(0.09), lineWidth: 1)
         )
+    }
+}
+
+/// Palette and layout, side by side or stacked. The palette menu offers the seven styles —
+/// each a transformation of the managed club's colours — and then every team in the game,
+/// so any club's colours can be worn whatever club is being managed.
+struct ThemeControls: View {
+    @Environment(AppStore.self) private var store
+    var vertical: Bool = true
+    var menuWidth: CGFloat? = nil
+
+    private var paletteOptions: [BentoOption<PaletteChoice>] {
+        var options = ThemePreset.allCases.map { preset in
+            BentoOption(
+                preset.displayName,
+                value: PaletteChoice.style(preset),
+                subtitle: preset == .club ? (store.managedClub?.name ?? "Your club") : nil
+            )
+        }
+        options += ClubDatabase.all
+            .sorted { $0.name < $1.name }
+            .map { club in
+                BentoOption(
+                    club.name,
+                    value: PaletteChoice.team(club.id),
+                    subtitle: "\(club.shortName) colours",
+                    symbol: "shield.fill"
+                )
+            }
+        return options
+    }
+
+    private var paletteBinding: Binding<PaletteChoice> {
+        Binding(
+            get: {
+                if let id = store.state.paletteClubID { return .team(id) }
+                return .style(store.themePreset)
+            },
+            set: { choice in
+                switch choice {
+                case .style(let preset): store.setThemePreset(preset)
+                case .team(let id): store.setPaletteClub(id)
+                }
+            }
+        )
+    }
+
+    private var layoutBinding: Binding<ThemePreset.LayoutPreset> {
+        Binding(
+            get: { store.layoutPreset },
+            set: { store.setLayoutPreset($0) }
+        )
+    }
+
+    var body: some View {
+        if vertical {
+            VStack(alignment: .leading, spacing: 8) {
+                paletteMenu
+                layoutMenu
+            }
+        } else {
+            HStack(spacing: 8) {
+                paletteMenu
+                layoutMenu
+            }
+        }
+    }
+
+    private var paletteMenu: some View {
+        menu("PALETTE", selection: paletteBinding, options: paletteOptions)
+    }
+
+    private var layoutMenu: some View {
+        menu(
+            "LAYOUT",
+            selection: layoutBinding,
+            options: ThemePreset.LayoutPreset.allCases.map {
+                BentoOption($0.displayName, value: $0)
+            }
+        )
+    }
+
+    private func menu<Value: Hashable>(
+        _ title: String,
+        selection: Binding<Value>,
+        options: [BentoOption<Value>]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .tracking(1)
+                .foregroundStyle(.secondary)
+            BentoMenu(selection: selection, options: options, width: menuWidth)
+        }
     }
 }
