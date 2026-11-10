@@ -3,12 +3,13 @@ import Foundation
 enum GameRules {
     static let clubCashPerMinute = 10
     /// Every Club Cash payout is tuned through here: study sessions, tasks, assessments,
-    /// level-up bonuses and academy work all pass through `earnedCash`. Costs are untouched,
-    /// so a squad upgrade still costs the same while the income that funds it is 20% tighter.
-    static let cashEarnRate = 0.8
+    /// level-up bonuses and academy work all pass through `earnedCash`. Player prices and
+    /// the 95,000 academy rungs are set in the tens of thousands, so income is paid at this
+    /// multiple of the per-minute rate: ninety minutes of study is roughly 2,700–3,800.
+    static let cashEarnRate = 3.0
     static let xpPerMinute = 6
     static let minutesPerMatch = 90
-    static let startingCash = 600
+    static let startingCash = 2_500
     /// Club Cash paid for ticking off a todo, before the subject's cash multiplier.
     static let clubCashPerTodo = 100
     static let benchLimit = 7
@@ -48,10 +49,52 @@ enum GameRules {
     static let performanceBonusDeviation = 1.5
     /// A goalkeeper earns it by keeping this share of his club's clean sheets.
     static let performanceBonusCleanSheetShare = 0.35
-    static let academyIntakePerSeason = 3
     /// Competitive matches between each batch of academy prospects.
     static let matchesPerAcademyIntake = 5
     static let maxAcademyLevel = 5
+
+    /// What one batch from an academy at a given level looks like: how many prospects walk
+    /// through the door, the band their rating is rolled from, and the band their ceiling is
+    /// rolled from. The ceiling is a chance, not a promise: a level 5 intake can still contain
+    /// a 75-rated boy who tops out at 91.
+    struct AcademyIntakeProfile {
+        let count: Int
+        let overall: ClosedRange<Int>
+        let potential: ClosedRange<Int>
+    }
+
+    /// Level 1 is a bare-bones youth setup, level 5 an elite one.
+    static func academyIntakeProfile(_ level: Int) -> AcademyIntakeProfile {
+        switch min(max(level, 1), maxAcademyLevel) {
+        case 2: AcademyIntakeProfile(count: 2, overall: 55...65, potential: 70...80)
+        case 3: AcademyIntakeProfile(count: 3, overall: 60...70, potential: 75...82)
+        case 4: AcademyIntakeProfile(count: 4, overall: 70...80, potential: 83...91)
+        case 5: AcademyIntakeProfile(count: 4, overall: 75...85, potential: 91...99)
+        default: AcademyIntakeProfile(count: 1, overall: 50...60, potential: 60...70)
+        }
+    }
+
+    static func academyIntakeCount(_ level: Int) -> Int {
+        academyIntakeProfile(level).count
+    }
+
+    /// The academy a club you do not manage runs, simplified to one number. Seeding pots
+    /// already measure a club's standing, so the best clubs run the best academies and the
+    /// fourth pot runs the worst.
+    static func academyLevel(forPot pot: Int) -> Int {
+        switch pot {
+        case 1: 5
+        case 2: 4
+        case 3: 3
+        default: 1
+        }
+    }
+
+    /// Youth coaching loses its edge without money behind it: every new season the academy
+    /// slips one level, and never below the bottom rung.
+    static func decayedAcademyLevel(_ level: Int) -> Int {
+        min(maxAcademyLevel, max(1, level - 1))
+    }
     /// Exams earn this multiplier on top of the subject multiplier.
     static let examRewardMultiplier = 2.0
     /// Base cash and XP for an assessment ranked 1st in its class. Lower places pay less.
@@ -71,11 +114,13 @@ enum GameRules {
         guard let classRank, classRank >= 1 else { return 0 }
         return max(assessmentRankFloor, 1.0 - Double(classRank - 1) * assessmentRankStep)
     }
-    /// Club Cash needed to move the academy from `level` to `level + 1`.
+    /// Club Cash needed to move the academy from `level` to `level + 1`: a flat 95,000 for
+    /// every rung, so climbing from level 1 to level 5 costs 380,000 in all.
+    static let academyUpgradeCostPerLevel = 95_000
+
     static func academyUpgradeCost(from level: Int) -> Int? {
-        let costs = [1_500, 3_000, 6_000, 12_000]
-        guard level >= 1, level <= costs.count else { return nil }
-        return costs[level - 1]
+        guard level >= 1, level < maxAcademyLevel else { return nil }
+        return academyUpgradeCostPerLevel
     }
 }
 
@@ -235,6 +280,13 @@ enum PlayerPricing {
     static let baselineOverall = 60
     static let baselineFee = 250
     static let growthPerOverall = 1.16
+    /// Every player asks more than twice what the rating curve alone would price him at —
+    /// a 50% premium, then another 35% on top — so a signing is a real outlay.
+    static let pricePremium = 2.025
+    /// A rise the player asked for by hand, as a fraction: 0.35 means every price is 35%
+    /// higher than the curve. The career's `playerPriceRise` is the source of truth and
+    /// AppStore keeps this in step, so the market, squad values and rival bids all agree.
+    static var manualRise: Double = 0
 
     /// A player's price holds through his peak years and then falls with every year he ages,
     /// so a club pays for the player rather than for a fading name.
@@ -248,7 +300,8 @@ enum PlayerPricing {
 
     static func fee(forRating rating: Double) -> Int {
         let steps = max(0, rating - Double(baselineOverall))
-        return Int((Double(baselineFee) * pow(growthPerOverall, steps)).rounded())
+        let curve = Double(baselineFee) * pow(growthPerOverall, steps) * pricePremium
+        return Int((curve * (1 + max(0, manualRise))).rounded())
     }
 
     /// What a player is worth on the market. Anyone with room to grow is valued at the
@@ -470,9 +523,15 @@ enum ClubDatabase {
         return FcDatabase.shared.club(id)?.rating ?? 75
     }
 
+    /// Looked up on nearly every transfer row, so the list is indexed once.
+    private static let clubIndex: [String: Club] = Dictionary(
+        all.map { ($0.id, $0) },
+        uniquingKeysWith: { first, _ in first }
+    )
+
     static func club(for id: String?) -> Club? {
         guard let id else { return nil }
-        return all.first(where: { $0.id == id })
+        return clubIndex[id]
     }
 
     static var seededPots: [[Club]] {
@@ -485,11 +544,26 @@ enum ClubDatabase {
         }
     }
 
-    static func potNumber(for clubID: String) -> Int {
-        for (index, pot) in seededPots.enumerated() {
-            if pot.contains(where: { $0.id == clubID }) { return index + 1 }
+    /// Every club runs an academy, not just yours. It is simplified to the level its seeding
+    /// pot earns: pot 1 the best, pot 4 and below the worst.
+    static func academyLevel(for clubID: String) -> Int {
+        GameRules.academyLevel(forPot: potNumber(for: clubID))
+    }
+
+    /// Pot numbers are looked up constantly (every club card shows one), so the pots are
+    /// flattened into a dictionary once rather than searched per redraw.
+    private static let potIndex: [String: Int] = {
+        var index: [String: Int] = [:]
+        for (offset, pot) in seededPots.enumerated() {
+            for club in pot {
+                index[club.id] = offset + 1
+            }
         }
-        return 4
+        return index
+    }()
+
+    static func potNumber(for clubID: String) -> Int {
+        potIndex[clubID] ?? 4
     }
 }
 
@@ -916,6 +990,20 @@ struct TodoItem: Identifiable, Codable, Hashable {
         case dueDate
         case rewardAwarded
         case priority
+    }
+}
+
+extension TodoItem {
+    /// The calendar day the task is due on, normalised so tasks filed for the same day land
+    /// in one bucket however they were entered.
+    var dueDay: Date? {
+        dueDate.map { Calendar.current.startOfDay(for: $0) }
+    }
+
+    /// Still open and already past its due day.
+    var isOverdue: Bool {
+        guard !isCompleted, let dueDay else { return false }
+        return dueDay < Calendar.current.startOfDay(for: Date())
     }
 }
 
@@ -1652,6 +1740,14 @@ struct GameState: Codable {
     var academyLevel: Int = 1
     /// Competitive matches played since the last academy intake.
     var matchesSinceAcademyIntake: Int = 0
+    /// A rise on every player price the user asked for by hand, as a fraction. Raises only
+    /// ever add to this: a negative percentage is refused, so it can never fall again.
+    var playerPriceRise: Double = 0
+    /// The size and moment of the most recent manual rise, so the market card can show it.
+    var lastPriceRisePercent: Double = 0
+    var lastPriceRiseAt: Date? = nil
+    /// The chosen colour preset. Every preset is a transformation of the club's own colours.
+    var themePreset: String = ThemePreset.club.rawValue
     /// Tests and exams with their marks, weightings, class ranks and topic results.
     var assessments: [Assessment] = []
     /// Optional so a career saved before formations existed still opens as a 4-3-3.
@@ -1697,6 +1793,10 @@ struct GameState: Codable {
         case assessments
         case formation
         case mistakes
+        case playerPriceRise
+        case lastPriceRisePercent
+        case lastPriceRiseAt
+        case themePreset
     }
 
     static func fresh() -> GameState {
@@ -1781,6 +1881,10 @@ extension GameState {
         // Careers saved before formations existed have no key here and open as a 4-3-3.
         formation = try container.decodeIfPresent(Formation.self, forKey: .formation)
         mistakes = try container.decodeIfPresent([MistakeEntry].self, forKey: .mistakes) ?? []
+        playerPriceRise = try container.decodeIfPresent(Double.self, forKey: .playerPriceRise) ?? 0
+        lastPriceRisePercent = try container.decodeIfPresent(Double.self, forKey: .lastPriceRisePercent) ?? 0
+        lastPriceRiseAt = try container.decodeIfPresent(Date.self, forKey: .lastPriceRiseAt)
+        themePreset = try container.decodeIfPresent(String.self, forKey: .themePreset) ?? ThemePreset.club.rawValue
     }
 }
 

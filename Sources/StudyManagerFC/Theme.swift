@@ -139,12 +139,60 @@ private struct HSV {
 /// The managed club drives the whole app's palette: a Barcelona career runs garnet and
 /// blue, a Real Madrid career white and gold. Before a career exists the default palette
 /// is used unchanged, so club selection keeps the neutral bento look.
+/// Colour presets that stay tied to the chosen club: every preset transforms the club's
+/// own two colours rather than substituting a fixed palette, so a Barcelona career stays
+/// garnet and blue under all five.
+enum ThemePreset: String, CaseIterable, Identifiable {
+    case club
+    case deep
+    case bright
+    case pastel
+    case mono
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .club: "Club colours"
+        case .deep: "Deep"
+        case .bright: "Bright"
+        case .pastel: "Pastel"
+        case .mono: "Tinted mono"
+        }
+    }
+
+    /// The preset applied to a club colour that has already been lifted for the canvas.
+    func apply(to rgb: RGB) -> RGB {
+        var hsv = HSV(rgb)
+        switch self {
+        case .club:
+            break
+        case .deep:
+            hsv.s = min(1, hsv.s * 1.12)
+            hsv.v = max(0.35, hsv.v * 0.78)
+        case .bright:
+            hsv.s = min(1, hsv.s * 1.18)
+            hsv.v = min(1, hsv.v * 0.92 + 0.16)
+        case .pastel:
+            hsv.s = hsv.s * 0.42
+            hsv.v = min(1, 0.84 + hsv.v * 0.16)
+        case .mono:
+            hsv.s = hsv.s * 0.12
+            hsv.v = max(hsv.v, 0.8)
+        }
+        return hsv.rgb
+    }
+}
+
 enum TeamTheme {
     static var club: Club?
+    /// The career's chosen preset. Every accent in the app is read through it.
+    static var preset: ThemePreset = .club
 
     static var hasClub: Bool { club != nil }
 
-    /// Primary accent, brightened enough to read on the near-black canvas.
+    /// Primary accent, brightened enough to read on the near-black canvas and then run
+    /// through the chosen preset.
     static var primary: Color { accent(club?.primaryHex) ?? Color(hex: "2FBF71") }
 
     /// Secondary accent, brightened the same way.
@@ -157,7 +205,7 @@ enum TeamTheme {
 
     private static func lifted(_ hex: String?) -> RGB? {
         guard let hex, let rgb = RGB(hex) else { return nil }
-        return rgb.liftedForAccent
+        return preset.apply(to: rgb.liftedForAccent)
     }
 
     private static func accent(_ hex: String?) -> Color? { lifted(hex)?.color }

@@ -430,6 +430,9 @@ struct BulletproofJournalView: View {
                     .buttonStyle(.bentoBordered)
                     .bentoTint(.white)
                 Button(role: .destructive) {
+                    if let attachment = entry.attachment {
+                        JournalImageCache.forget(attachment)
+                    }
                     store.deleteMistake(entry.id)
                 } label: {
                     Image(systemName: "trash")
@@ -464,9 +467,27 @@ struct BulletproofJournalView: View {
     }
 
     private func attachmentPreview(_ name: String) -> NSImage? {
-        let url = store.journalAttachmentURL(name)
+        JournalImageCache.image(named: name, at: store.journalAttachmentURL(name))
+    }
+}
+
+/// Journal photos are read from disk once and kept in memory. Every redraw of the list — and
+/// every keystroke in the editor, which redraws its preview — used to decode the PNG again.
+enum JournalImageCache {
+    private static let cache = NSCache<NSString, NSImage>()
+
+    static func image(named name: String, at url: URL) -> NSImage? {
         guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
-        return NSImage(contentsOf: url)
+        let key = name as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    /// Called when an entry is deleted or its scan replaced, so a stale picture is not shown.
+    static func forget(_ name: String) {
+        cache.removeObject(forKey: name as NSString)
     }
 }
 
@@ -655,9 +676,7 @@ private struct MistakeEditorCard: View {
     }
 
     private func previewImage(_ name: String) -> NSImage? {
-        let url = store.journalAttachmentURL(name)
-        guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
-        return NSImage(contentsOf: url)
+        JournalImageCache.image(named: name, at: store.journalAttachmentURL(name))
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {

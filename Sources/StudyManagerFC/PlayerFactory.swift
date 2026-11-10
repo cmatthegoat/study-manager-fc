@@ -148,26 +148,27 @@ enum PlayerFactory {
         }
     }
 
-    static func makeYouthProspects(season: Int, count: Int) -> [Player] {
-        var generator = SeededGenerator(seed: StableSeed.value(for: "youth-\(season)"))
-        return (0..<count).map { _ in
-            let position = PlayerPosition.allCases.randomElement(using: &generator) ?? .striker
-            let nation = Nations.all.randomElement()?.code ?? "ENG"
-            return makePlayer(
-                targetOverall: nil,
-                position: position,
-                nationCode: nation,
+    /// The teenagers the rest of the football world produces between seasons. Each prospect
+    /// is a graduate of one club's academy, so his rating and ceiling follow that club's
+    /// seeding pot: pot 1 clubs hand over level 5 prospects, pot 4 clubs level 1 ones.
+    static func makeWorldAcademyIntake(season: Int, count: Int) -> [Player] {
+        var generator = SeededGenerator(seed: StableSeed.value(for: "world-youth-\(season)"))
+        let clubs = ClubDatabase.all
+        guard !clubs.isEmpty else { return [] }
+        return (0..<count).compactMap { _ in
+            guard let club = clubs.randomElement(using: &generator) else { return nil }
+            return makeAcademyGraduate(
+                clubID: club.id,
+                nationCode: club.countryCode,
+                level: ClubDatabase.academyLevel(for: club.id),
                 season: season,
-                ageRange: 16...18,
-                forcedRarity: Bool.random(using: &generator) ? .wonderkid : .gold,
-                highPotential: true,
                 using: &generator
             )
         }
     }
 
-    /// Prospects promoted straight into the senior squad. They arrive as raw teenagers
-    /// with high ceilings rather than ready-made first-team players.
+    /// Prospects promoted straight into the senior squad, generated from a fixed raw-teenage
+    /// band. Careers that do not track a level (older saves) still use this.
     static func makeAcademyProspects(season: Int, count: Int) -> [Player] {
         var generator = SeededGenerator(seed: StableSeed.value(for: "academy-\(season)"))
         return (0..<count).map { _ in
@@ -186,32 +187,70 @@ enum PlayerFactory {
         }
     }
 
-    /// A batch of academy prospects whose quality depends on the academy level. Level 1 intakes
-    /// are raw teenagers with little or no potential; level 5 intakes are close to first-team
-    /// quality with real ceilings.
-    static func makeAcademyIntake(level: Int, season: Int, count: Int) -> [Player] {
+    /// A batch of academy prospects whose quality depends on the academy level: level 1 sends
+    /// one boy through with little to work with, level 5 sends four who could already play.
+    static func makeAcademyIntake(
+        level: Int,
+        season: Int,
+        count: Int? = nil,
+        nationCode: String? = nil
+    ) -> [Player] {
         var generator = SeededGenerator(seed: UInt64.random(in: 1...UInt64.max))
-        let clampedLevel = min(max(level, 1), GameRules.maxAcademyLevel)
-        let mean = 0.15 + Double(clampedLevel - 1) * 0.175
-        return (0..<count).map { _ in
-            let quality = min(1, max(0, mean + Double.random(in: -0.2...0.2, using: &generator)))
-            let overall = 45 + Int((quality * 25).rounded())
-            let ceiling = Int((quality * 25 * Double.random(in: 0.2...1.2, using: &generator)).rounded())
-            let position = PlayerPosition.allCases.randomElement(using: &generator) ?? .centralMid
-            let nation = Nations.all.randomElement(using: &generator)?.code ?? "ENG"
-            var player = makePlayer(
-                targetOverall: overall,
-                position: position,
+        let profile = GameRules.academyIntakeProfile(level)
+        return (0..<(count ?? profile.count)).compactMap { _ in
+            let nation = nationCode ?? Nations.all.randomElement(using: &generator)?.code ?? "ENG"
+            return makeAcademyProspect(
+                profile: profile,
                 nationCode: nation,
                 season: season,
-                ageRange: 16...18,
-                forcedRarity: nil,
-                highPotential: false,
                 using: &generator
             )
-            player.potential = min(99, max(overall, overall + ceiling))
-            return player
         }
+    }
+
+    /// One academy graduate for a club you do not manage, at that club's own level.
+    static func makeAcademyGraduate(
+        clubID: String,
+        nationCode: String,
+        level: Int,
+        season: Int,
+        using generator: inout SeededGenerator
+    ) -> Player {
+        var player = makeAcademyProspect(
+            profile: GameRules.academyIntakeProfile(level),
+            nationCode: nationCode,
+            season: season,
+            using: &generator
+        )
+        player.clubID = clubID
+        return player
+    }
+
+    /// Rolls one prospect from an intake profile: a rating somewhere in the level's band and a
+    /// ceiling rolled separately inside its own band, so two boys from the same batch can end
+    /// up a long way apart. A ceiling never sits below the rating he already has.
+    private static func makeAcademyProspect(
+        profile: GameRules.AcademyIntakeProfile,
+        nationCode: String,
+        season: Int,
+        using generator: inout SeededGenerator
+    ) -> Player {
+        let overall = Int.random(in: profile.overall, using: &generator)
+        let potential = max(overall, Int.random(in: profile.potential, using: &generator))
+        let position = PlayerPosition.allCases.randomElement(using: &generator) ?? .centralMid
+        let age = Int.random(in: 16...18, using: &generator)
+        var player = makePlayer(
+            targetOverall: overall,
+            position: position,
+            nationCode: nationCode,
+            season: season,
+            ageRange: age...age,
+            forcedRarity: nil,
+            highPotential: potential - overall >= 12,
+            using: &generator
+        )
+        player.potential = potential
+        return player
     }
 
     static func makePackPlayer(rarity: PlayerRarity, season: Int) -> Player {

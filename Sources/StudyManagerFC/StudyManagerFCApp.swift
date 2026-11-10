@@ -157,6 +157,7 @@ enum MainSection: String, CaseIterable, Identifiable {
     case log
     case subjects
     case todos
+    case calendar
     case squad
     case transfers
     case europe
@@ -172,6 +173,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .log: "Study Log"
         case .subjects: "Subjects"
         case .todos: "Todos"
+        case .calendar: "Calendar"
         case .squad: "Squad"
         case .transfers: "Transfers"
         case .europe: "Champions League"
@@ -187,6 +189,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .log: "clock.arrow.circlepath"
         case .subjects: "books.vertical"
         case .todos: "checklist"
+        case .calendar: "calendar"
         case .squad: "person.3"
         case .transfers: "arrow.left.arrow.right"
         case .europe: "trophy"
@@ -300,13 +303,15 @@ struct MainTabView: View {
     private var content: some View {
         switch selection {
         case .dashboard:
-            DashboardView(onOpenLog: { selection = .log })
+            DashboardView(onOpenLog: { selection = .log }, onOpenCalendar: { selection = .calendar })
         case .log:
             StudyLogView()
         case .subjects:
             SubjectsView()
         case .todos:
             TodosView()
+        case .calendar:
+            CalendarView()
         case .squad:
             SquadView()
         case .transfers:

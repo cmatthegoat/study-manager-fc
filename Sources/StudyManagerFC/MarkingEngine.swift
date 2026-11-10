@@ -138,6 +138,12 @@ enum MarkingService {
         let answer = request.answerText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !answer.isEmpty || !request.answerImages.isEmpty else { throw MarkingError.noAnswer }
 
+        // Handwriting only exists in the page images, and Apple's on-device model is handed
+        // text. So a paper with scans goes to a vision model when one is configured, and the
+        // on-device marker is only used for it when there is a transcript to mark.
+        let hasScans = !request.answerImages.isEmpty
+        let scansNeedCloud = hasScans && openRouterReady
+
         switch MarkingPreferences.preference {
         case .openRouter:
             return try await runInCloud(request)
@@ -146,17 +152,26 @@ enum MarkingService {
                 if case .unavailable(let reason) = availability { throw MarkingError.notEnabled(reason) }
                 throw MarkingError.systemTooOld
             }
-            return try await runOnDeviceOutcome(request, answer: answer)
+            if hasScans, answer.isEmpty {
+                throw MarkingError.notEnabled("Handwriting can only be read by a vision model. Add an OpenRouter key and model in Marking Settings, or type the answers in yourself.")
+            }
+            return try await runOnDeviceOutcome(request, answer: answer, unreadScans: hasScans)
         case .automatic:
+            if scansNeedCloud {
+                return try await runInCloud(request)
+            }
             if availability.isAvailable {
                 do {
-                    return try await runOnDeviceOutcome(request, answer: answer)
+                    return try await runOnDeviceOutcome(request, answer: answer, unreadScans: hasScans)
                 } catch {
                     // A paper too long for the on-device window is exactly the case the
                     // fallback exists for, so a configured OpenRouter takes it instead.
                     guard openRouterReady else { throw error }
                     return try await runInCloud(request)
                 }
+            }
+            if hasScans, answer.isEmpty {
+                throw MarkingError.notEnabled("Handwriting can only be read by a vision model. Add an OpenRouter key and model in Marking Settings, or type the answers in yourself.")
             }
             guard openRouterReady else {
                 if case .unavailable(let reason) = availability { throw MarkingError.notEnabled(reason) }
@@ -171,14 +186,20 @@ enum MarkingService {
         try await run(request).result
     }
 
-    private static func runOnDeviceOutcome(_ request: MarkingRequest, answer: String) async throws -> MarkingOutcome {
+    private static func runOnDeviceOutcome(
+        _ request: MarkingRequest,
+        answer: String,
+        unreadScans: Bool = false
+    ) async throws -> MarkingOutcome {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             let result = try await runOnDevice(request, answer: answer)
             return MarkingOutcome(
                 result: result,
                 backend: .onDevice,
-                detail: "Marked on this Mac — no bytes left the machine."
+                detail: unreadScans
+                    ? "Marked on this Mac from the recognised text only — the on-device model cannot see the scans."
+                    : "Marked on this Mac — no bytes left the machine."
             )
         }
         #endif

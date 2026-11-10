@@ -6,6 +6,7 @@ struct TodosView: View {
     @State private var draftTitle = ""
     @State private var selectedSubject: StudySubject = .other
     @State private var selectedSubtopicID: UUID?
+    @State private var draftDueDate: Date?
 
     @State private var editingTodoID: UUID?
     @State private var editingTitle = ""
@@ -142,6 +143,7 @@ struct TodosView: View {
                 .bentoTint(.primary)
                 .disabled(draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            DueDateField(dueDate: $draftDueDate)
             HStack(spacing: 6) {
                 Pill(
                     text: "+\(store.todoReward(for: effectiveSubject)) cash when completed (×\(multiplierText(effectiveSubject.cashMultiplier)))",
@@ -194,8 +196,14 @@ struct TodosView: View {
     }
 
     private func add() {
-        guard store.addTodo(draftTitle, subject: selectedSubject, subtopicID: selectedSubtopicID) != nil else { return }
+        guard store.addTodo(
+            draftTitle,
+            subject: selectedSubject,
+            subtopicID: selectedSubtopicID,
+            dueDate: draftDueDate
+        ) != nil else { return }
         draftTitle = ""
+        draftDueDate = nil
     }
 
     private func startEdit(_ todo: TodoItem) {
@@ -235,6 +243,82 @@ struct TodosView: View {
         var draft = store.state
         draft.todos.removeAll { $0.id == id }
         store.commit(draft)
+    }
+}
+
+/// An optional deadline for a task. Only a checkbox shows until it is switched on, so a
+/// task without one stays a single uncluttered line.
+struct DueDateField: View {
+    @Binding var dueDate: Date?
+    var label: String = "Due date"
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Toggle(isOn: hasDueDate) {
+                Label(label, systemImage: "calendar")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+            .toggleStyle(.checkbox)
+            .fixedSize()
+
+            if let date = dueDate {
+                DatePicker(
+                    "",
+                    selection: Binding(
+                        get: { date },
+                        set: { dueDate = Calendar.current.startOfDay(for: $0) }
+                    ),
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.compact)
+                .labelsHidden()
+                .controlSize(.small)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var hasDueDate: Binding<Bool> {
+        Binding(
+            get: { dueDate != nil },
+            set: { isOn in
+                dueDate = isOn ? Calendar.current.startOfDay(for: Date()) : nil
+            }
+        )
+    }
+}
+
+/// A task's deadline at a glance: red once it is late, amber on the day, muted later on.
+struct TodoDueBadge: View {
+    let todo: TodoItem
+
+    private var tint: Color {
+        if todo.isOverdue { return .red }
+        if let dueDay = todo.dueDay, Calendar.current.isDateInToday(dueDay) { return .studyAmber }
+        return .secondary
+    }
+
+    private var text: String {
+        guard let dueDay = todo.dueDay else { return "" }
+        let day = dueDay.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        if todo.isCompleted { return "Due \(day)" }
+        if todo.isOverdue { return "Overdue · \(day)" }
+        if Calendar.current.isDateInToday(dueDay) { return "Due today" }
+        if Calendar.current.isDateInTomorrow(dueDay) { return "Due tomorrow" }
+        return "Due \(day)"
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: todo.isOverdue ? "exclamationmark.circle.fill" : "calendar")
+                .font(.system(size: 8, weight: .bold))
+            Text(text)
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+        }
+        .foregroundStyle(tint)
+        .help(text)
     }
 }
 

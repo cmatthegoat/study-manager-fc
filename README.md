@@ -13,16 +13,27 @@ the last revision here that contained it is `7d973ec`.
 
 ## What's in it
 
-**macOS sections** — Dashboard, Study Log, Subjects, Todos, Squad, Transfers,
-Champions League, Exams, Journal, AI Marking.
+**macOS sections** — Dashboard, Study Log, Subjects, Todos, Calendar, Squad,
+Transfers, Champions League, Exams, Journal, AI Marking.
 
-**Automatic marking.** The AI Marking tab marks a past paper against a rubric with
-Apple's on-device model, so nothing is uploaded, there is no account and no cost
-per paper. Guidelines and your written answer can be typed, pasted, or added as
-**PNG, JPEG or PDF** files; images and scanned PDFs are read with Vision OCR
-first, because the model only accepts text. Results come back per question with a
-reason, are shown as a draft for review, and are saved into the assessment log
-with one button. It needs macOS 26 or later on an Apple silicon Mac with Apple
+**Calendar.** Any task can carry a due date, set when it is added or from its edit
+sheet. The Todos board sorts the soonest deadline first within a priority and marks
+tasks that are late or due today. The Calendar section draws every dated task on a
+month grid, counts what is overdue, due today and due in the next seven days, and
+lists a selected day's tasks — tickable in place — with the undated ones kept in
+their own card so nothing quietly loses a deadline.
+
+**Automatic marking.** The AI Marking tab marks a past paper against a rubric.
+Guidelines and your answer can be typed, pasted, or attached as **PNG, JPEG, HEIC
+or PDF** files. A handwritten page is marked from the page itself: each page is
+rendered to a JPEG (a PDF page too, up to six per paper) and sent to a vision
+model, with any OCR transcript labelled as a hint that may be garbled. That path
+needs OpenRouter configured, because Apple's on-device model only accepts text;
+automatic marking routes a scanned paper there when a key is set, and says so
+plainly when it cannot. Typed answers and printed text still mark on-device, so
+nothing is uploaded, there is no account and no cost per paper. Results come back
+per question with a reason, are shown as a draft for review, and are saved into
+the assessment log with one button. It needs macOS 26 or later on an Apple silicon Mac with Apple
 Intelligence switched on; the tab explains what is missing otherwise, and the
 macOS 14 minimum still builds and runs everything else.
 
@@ -74,14 +85,39 @@ activity and time-period filters, day-by-day grouping and per-day totals.
 activity multiplier × grade`, and adds the same minutes to your match readiness.
 Past papers are worth 1.5× homework, exam-style questions 1.25×, and marks scale
 the reward from 0.8× at 0% to 1.45× at 100%. Ninety minutes unlocks a fixture.
+Payouts run through a 3× income rate — 30 Club Cash a minute before the subject and
+activity multipliers, so ninety minutes is roughly 2,700–3,800 — because player prices
+and the 95,000 academy rungs are set in the tens of thousands. A new career starts with
+2,500 Club Cash.
 
 **Career.** Real clubs and squads imported from the EA FC database, negotiated
 transfers, a five-level youth academy that intakes every five matches, player
 development and retirement at 40, and a full season/schedule/trophy pipeline.
+Player prices are the rating curve with a 50% premium and then another 35% on top,
+just over double the bare curve. The **Market prices** card on the Transfer Market tab
+lets you raise every price by hand: a percentage stacks on the current prices, is saved
+with the career and can never be undone — a negative or zero percentage is refused, and
+the total is capped at ten times the standard. The sidebar's **Theme** menu picks the
+palette — Club colours, Deep, Bright, Pastel or Tinted mono — and every preset is a
+transformation of the club's own two colours, so the board always belongs to the club
+you manage. A club never
+counters below the bid it is answering: a bid within a whisker of the asking price
+closes the deal at the bid rather than producing a lower "counter".
+
+**Academy.** Each level has its own batch: level 1 sends one 50–60 rated boy with
+60–70 potential, level 2 two at 55–65/70–80, level 3 three at 60–70/75–82, level 4
+four at 70–80/83–91 and level 5 four at 75–85/91–99. The rating and the ceiling are
+rolled separately inside their bands, so a batch is a spread rather than a fixed
+template. Each upgrade costs a flat **95,000 Club Cash** for every rung, so climbing
+from level 1 to level 5 costs 380,000 in all. The academy slips one level at the
+start of every new season, so holding level 5 costs repeated reinvestment. Clubs you do not manage run academies too,
+simplified to the level their seeding pot earns (pot 1 level 5, pot 2 level 4, pot 3
+level 3, pot 4 and below level 1), and the teenagers they graduate each summer are
+the prospects that enter the market.
 
 **Study side.** Per-subject and per-topic aggregates weighted by marks attempted,
 custom topics you create yourself, priority todos with inline `p1 #Subject - Topic:`
-directives, streaks, and assessments that reward class rank.
+directives, optional due dates, streaks, and assessments that reward class rank.
 
 **Team colours.** The whole palette follows the club you manage — Barcelona runs
 garnet and blue, Real Madrid white and gold — driven by `TeamTheme` in
@@ -103,10 +139,16 @@ Useful entry points:
 swift run StudyManagerFC --self-test         # round-trips a career in a temp dir
 swift run StudyManagerFC --verify-database   # proves the bundled DB decodes
 swift run StudyManagerFC --verify-marking    # marks a tiny paper with the on-device model
+Scripts/run.sh                              # self-test, package and relaunch in one step
 swift run StudyManagerFC --verify-openrouter # lists image-capable models; tests the key if one is stored
+swift run -c release StudyManagerFC --bench   # times the market, search, saves and lookups
 Scripts/package-app.sh                      # writes dist/StudyManagerFC.app
 Scripts/package-dmg.sh                      # writes dist/StudyManagerFC.dmg (drag-to-Applications image)
 ```
+
+The bundle in `dist/` is a snapshot, not a live build: launching it after changing
+sources shows the old UI until `Scripts/package-app.sh` is run again. `swift run`
+always uses the current code.
 
 Requires Xcode 15+ / Swift 5.9 and macOS 14 (the package targets `.macOS(.v14)`).
 Automatic marking needs macOS 26 or later on an Apple silicon Mac with Apple

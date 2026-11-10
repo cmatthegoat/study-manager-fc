@@ -479,13 +479,20 @@ struct TodoItemRow: View {
                     .foregroundStyle(todo.isCompleted ? Color.secondary : Color.primary)
                     .lineLimit(2)
             }
-            if let subtopic = todo.subtopicName {
-                Text(subtopic)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Color.primary.opacity(0.06), in: Capsule())
+            if todo.subtopicName != nil || todo.dueDate != nil {
+                HStack(spacing: 6) {
+                    if let subtopic = todo.subtopicName {
+                        Text(subtopic)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                    }
+                    if todo.dueDate != nil {
+                        TodoDueBadge(todo: todo)
+                    }
+                }
             }
         }
     }
@@ -517,6 +524,7 @@ struct TodoDetailSheet: View {
     @State private var subject: StudySubject = .other
     @State private var subtopicID: UUID?
     @State private var priority: Int? = nil
+    @State private var dueDate: Date?
 
     private var subjectTopics: [Subtopic] {
         store.subtopics(for: subject)
@@ -556,6 +564,7 @@ struct TodoDetailSheet: View {
                         width: 180
                     )
                 }
+                DueDateField(dueDate: $dueDate)
             }
             HStack {
                 Spacer()
@@ -582,6 +591,7 @@ struct TodoDetailSheet: View {
         subject = todo.subject ?? .other
         subtopicID = todo.subtopicID
         priority = todo.priority
+        dueDate = todo.dueDate
     }
 
     private func save() {
@@ -595,6 +605,7 @@ struct TodoDetailSheet: View {
         draft.todos[index].subtopicID = topic?.id
         draft.todos[index].subtopicName = topic?.name
         draft.todos[index].priority = priority
+        draft.todos[index].dueDate = dueDate.map { Calendar.current.startOfDay(for: $0) }
         store.commit(draft)
     }
 }

@@ -8,6 +8,8 @@ struct TransfersView: View {
     @State private var priceFilter: PriceBand?
     @State private var sortMode: SortMode = .rating
     @State private var selectedListing: AppStore.TransferListing?
+    @State private var priceRiseText = ""
+    @State private var priceRiseError: String?
 
     private enum SortMode: String, CaseIterable, Identifiable {
         case rating
@@ -27,37 +29,45 @@ struct TransfersView: View {
         }
     }
 
-    /// Price brackets on the asking price the user would pay.
-    private enum PriceBand: String, CaseIterable, Identifiable {
-        case under500
-        case from500to1k
-        case from1kto2500
-        case from2500to5k
-        case from5kto10k
-        case over10k
-
-        var id: String { rawValue }
-
-        var label: String {
-            switch self {
-            case .under500: "Under 500"
-            case .from500to1k: "500 – 1,000"
-            case .from1kto2500: "1,000 – 2,500"
-            case .from2500to5k: "2,500 – 5,000"
-            case .from5kto10k: "5,000 – 10,000"
-            case .over10k: "Over 10,000"
-            }
-        }
+    /// A price bracket on the asking price. The bands used to be fixed numbers stopping at
+    /// "Over 10,000", which stopped telling one player from another once prices carried the
+    /// premium and the user's own rises, so they are now built from the market itself.
+    private struct PriceBand: Identifiable, Hashable {
+        let id: Int
+        let lower: Int?
+        let upper: Int?
+        let label: String
 
         func contains(_ price: Int) -> Bool {
-            switch self {
-            case .under500: price < 500
-            case .from500to1k: price >= 500 && price < 1_000
-            case .from1kto2500: price >= 1_000 && price < 2_500
-            case .from2500to5k: price >= 2_500 && price < 5_000
-            case .from5kto10k: price >= 5_000 && price < 10_000
-            case .over10k: price >= 10_000
+            if let lower, price < lower { return false }
+            if let upper, price >= upper { return false }
+            return true
+        }
+    }
+
+    /// Six geometric bands from the cheapest asking price to the dearest, so each holds a
+    /// similar share of the market however the prices move.
+    private var priceBands: [PriceBand] {
+        let prices = store.transferMarket.map(\.askingPrice).sorted()
+        guard let cheapest = prices.first, let dearest = prices.last, dearest > cheapest else { return [] }
+        let steps = 6
+        let ratio = pow(Double(dearest) / Double(cheapest), 1 / Double(steps))
+        var edges: [Int] = [cheapest]
+        for step in 1..<steps {
+            let edge = Int((Double(cheapest) * pow(ratio, Double(step))).rounded())
+            if let last = edges.last, edge > last { edges.append(edge) }
+        }
+        return edges.indices.map { index in
+            let lower = index == 0 ? nil : edges[index]
+            let upper = index + 1 < edges.count ? edges[index + 1] : nil
+            let label: String
+            switch (lower, upper) {
+            case let (.some(low), .some(high)): label = "\(low.formatted()) – \(high.formatted())"
+            case let (nil, .some(high)): label = "Under \(high.formatted())"
+            case let (.some(low), nil): label = "\(low.formatted()) and up"
+            case (nil, nil): label = "Any price"
             }
+            return PriceBand(id: index, lower: lower, upper: upper, label: label)
         }
     }
 
@@ -70,49 +80,43 @@ struct TransfersView: View {
         var result = store.transferMarket.filter { listing in
             if let clubFilter, listing.clubID != clubFilter { return false }
             if let positionFilter, listing.record.position.group != positionFilter { return false }
-            if let priceFilter, !priceFilter.contains(store.askingPrice(for: listing)) { return false }
+            if let priceFilter, !priceFilter.contains(listing.askingPrice) { return false }
             guard !query.isEmpty else { return true }
-            if store.playerName(for: listing).lowercased().contains(query) { return true }
-            if listing.clubName.lowercased().contains(query) { return true }
-            return listing.record.position.displayName.lowercased().contains(query)
+            return listing.searchKey.contains(query)
         }
         switch sortMode {
         case .rating:
             result.sort { $0.record.ovr > $1.record.ovr }
         case .priceLowToHigh:
-            result = result
-                .map { ($0, store.askingPrice(for: $0)) }
-                .sorted { $0.1 < $1.1 }
-                .map(\.0)
+            result.sort { $0.askingPrice < $1.askingPrice }
         case .priceHighToLow:
-            result = result
-                .map { ($0, store.askingPrice(for: $0)) }
-                .sorted { $0.1 > $1.1 }
-                .map(\.0)
+            result.sort { $0.askingPrice > $1.askingPrice }
         case .name:
-            result.sort { store.playerName(for: $0) < store.playerName(for: $1) }
+            result.sort { $0.name < $1.name }
         }
         return result
     }
 
-    private var visibleListings: [AppStore.TransferListing] {
-        Array(filteredListings.prefix(150))
-    }
 
     var body: some View {
+        // Filtered once per redraw. Asking for it again in each branch rebuilt and re-sorted
+        // the whole market — three times over — on every keystroke.
+        let market = store.transferMarket
+        let matches = market.isEmpty ? [] : filteredListings
         ScrollView {
             VStack(spacing: 22) {
                 header
                 academyCard
+                priceControlCard
                 filters
-                if store.transferMarket.isEmpty {
+                if market.isEmpty {
                     EmptyStateView(
                         symbol: "arrow.left.arrow.right.circle",
                         title: "The market is empty",
                         message: "Start a career to see every player in the game database."
                     )
                     .surface()
-                } else if filteredListings.isEmpty {
+                } else if matches.isEmpty {
                     EmptyStateView(
                         symbol: "magnifyingglass",
                         title: "No players found",
@@ -121,7 +125,7 @@ struct TransfersView: View {
                     .surface()
                 } else {
                     LazyVStack(spacing: 8) {
-                        ForEach(visibleListings) { listing in
+                        ForEach(Array(matches.prefix(150))) { listing in
                             TransferRow(listing: listing) {
                                 selectedListing = listing
                             }
@@ -129,8 +133,8 @@ struct TransfersView: View {
                     }
                     .surface(padding: 16)
 
-                    if filteredListings.count > visibleListings.count {
-                        Text("Showing the top \(visibleListings.count) of \(filteredListings.count) matching players — narrow the filters or search to see more.")
+                    if matches.count > 150 {
+                        Text("Showing the top 150 of \(matches.count) matching players — narrow the filters or search to see more.")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
@@ -151,6 +155,7 @@ struct TransfersView: View {
         let level = store.state.academyLevel
         let cost = GameRules.academyUpgradeCost(from: level)
         let matchesLeft = GameRules.matchesPerAcademyIntake - store.state.matchesSinceAcademyIntake
+        let profile = GameRules.academyIntakeProfile(level)
         return HStack(alignment: .center, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("YOUTH ACADEMY")
@@ -166,9 +171,12 @@ struct TransfersView: View {
                 }
                 Text("Level \(level) of \(GameRules.maxAcademyLevel) - \(academyQualityLabel(level))")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
-                Text("Next intake in \(matchesLeft) \(matchesLeft == 1 ? "match" : "matches"). Higher levels bring stronger prospects with bigger ceilings.")
+                Text("Next intake in \(matchesLeft) \(matchesLeft == 1 ? "match" : "matches"): \(profile.count) prospect\(profile.count == 1 ? "" : "s"), \(profile.overall.lowerBound)-\(profile.overall.upperBound) rated, \(profile.potential.lowerBound)-\(profile.potential.upperBound) potential.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                Text("The academy slips one level at the start of every new season, so it needs reinvesting to stay elite.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.studyGold.opacity(0.9))
             }
             Spacer()
             if let cost {
@@ -193,6 +201,84 @@ struct TransfersView: View {
             }
         }
         .surface(padding: 16)
+    }
+
+    /// The user's own lever on the market: every player asks a bit more, permanently, and
+    /// only ever upward.
+    private var priceControlCard: some View {
+        let rise = store.state.playerPriceRise
+        let risePercent = Int((rise * 100).rounded())
+        let totalPercent = Int(((1 + rise) * 100).rounded())
+        return HStack(alignment: .center, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("MARKET PRICES")
+                    .font(.system(size: 8, weight: .black, design: .rounded))
+                    .tracking(1)
+                    .foregroundStyle(.secondary)
+                Text(rise > 0
+                     ? "Every player asks \(totalPercent)% of the standard price (+\(risePercent)%)."
+                     : "Every player asks the standard price.")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                Text("Raise every price by a percentage of your own. Raises stack on top of the last one and are saved with your career, and a price never comes back down: a negative or zero percentage is refused.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                if let lastRise = store.state.lastPriceRiseAt, rise > 0 {
+                    Text("Last raise +\(Int((store.state.lastPriceRisePercent * 100).rounded()))% on \(lastRise.formatted(date: .abbreviated, time: .omitted)) · a 75-rated 24-year-old now asks \(PlayerPricing.valuation(overall: 75, potential: 80, age: 24).formatted()).")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.studyGold.opacity(0.9))
+                }
+                if let priceRiseError {
+                    Text(priceRiseError)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            HStack(spacing: 8) {
+                HStack(spacing: 3) {
+                    TextField("25", text: $priceRiseText)
+                        .bentoField()
+                        .frame(width: 66)
+                    Text("%")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                Button("Raise prices", action: applyPriceRise)
+                    .buttonStyle(.bentoProminent)
+                    .bentoTint(.gold)
+            }
+        }
+        .surface(padding: 16)
+    }
+
+    /// Reads the percentage box, refuses anything that is not a rise, and leaves the stacking
+    /// and the saving to the store.
+    private func applyPriceRise() {
+        let cleaned = priceRiseText
+            .replacingOccurrences(of: "%", with: "")
+            .replacingOccurrences(of: ",", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, let percent = Double(cleaned), percent.isFinite else {
+            priceRiseError = "Enter a percentage, like 25."
+            return
+        }
+        guard percent > 0 else {
+            priceRiseError = "Only increases are allowed — prices never go down."
+            return
+        }
+        guard percent <= 200 else {
+            priceRiseError = "Raise prices by 200% at most in one go."
+            return
+        }
+        do {
+            try store.raisePlayerPrices(percent: percent)
+            priceRiseText = ""
+            priceRiseError = nil
+        } catch {
+            priceRiseError = error.localizedDescription
+        }
     }
 
     private func academyQualityLabel(_ level: Int) -> String {
@@ -257,7 +343,7 @@ struct TransfersView: View {
             BentoMenu(
                 selection: $priceFilter,
                 options: [BentoOption("Any price", value: PriceBand?.none)]
-                    + PriceBand.allCases.map { BentoOption($0.label, value: Optional($0)) },
+                    + priceBands.map { BentoOption($0.label, value: Optional($0)) },
                 width: 150
             )
 

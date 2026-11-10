@@ -62,7 +62,7 @@ struct MarkingView: View {
                 ScreenHeader(
                     eyebrow: "AI Marking",
                     title: "Mark a Past Paper",
-                    subtitle: "Add your work — typed, or as PNG, JPEG or PDF files. Guidelines are optional: attach a rubric for strict marking, or leave it out and the model solves each question itself."
+                    subtitle: "Add your work — typed, or as photos, scans or PDFs of the pages. Handwritten work is marked from the page images themselves, so a clear photo of your iPad export is enough. Guidelines are optional: attach a rubric for strict marking, or leave it out and the model solves each question itself."
                 )
 
                 availabilityCard
@@ -94,14 +94,14 @@ struct MarkingView: View {
         }
         .fileImporter(
             isPresented: $isImportingGuidelines,
-            allowedContentTypes: [.png, .jpeg, .pdf],
+            allowedContentTypes: [.png, .jpeg, .pdf, .heic],
             allowsMultipleSelection: true
         ) { result in
             importFiles(result, into: .guidelines)
         }
         .fileImporter(
             isPresented: $isImportingAnswer,
-            allowedContentTypes: [.png, .jpeg, .pdf],
+            allowedContentTypes: [.png, .jpeg, .pdf, .heic],
             allowsMultipleSelection: true
         ) { result in
             importFiles(result, into: .answer)
@@ -192,7 +192,7 @@ struct MarkingView: View {
                 Button {
                     isImportingGuidelines = true
                 } label: {
-                    Label("Add PNG / JPEG / PDF", systemImage: "paperclip")
+                    Label("Add photos / scan / PDF", systemImage: "paperclip")
                         .font(.system(size: 10, weight: .semibold))
                 }
                 .buttonStyle(.bentoBordered)
@@ -233,7 +233,7 @@ struct MarkingView: View {
                 .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(alignment: .topLeading) {
                     if answer.isEmpty {
-                        Text("Type your answers, or attach photos or scans of the paper. Handwriting reads far better when the scan is clean and well lit.")
+                        Text("Type your answers, or attach photos, scans or PDFs of the pages. Handwriting is read from the images, so attach even when there is no text — a PDF exported from an iPad works page by page.")
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, 13)
@@ -246,7 +246,7 @@ struct MarkingView: View {
                 Button {
                     isImportingAnswer = true
                 } label: {
-                    Label("Add PNG / JPEG / PDF", systemImage: "paperclip")
+                    Label("Add photos / scan / PDF", systemImage: "paperclip")
                         .font(.system(size: 10, weight: .semibold))
                 }
                 .buttonStyle(.bentoBordered)
@@ -267,7 +267,7 @@ struct MarkingView: View {
             if !answerImages.isEmpty {
                 HStack(spacing: 8) {
                     Pill(
-                        text: "\(answerImages.count) scan\(answerImages.count == 1 ? "" : "s") sent as images · \(totalImageSize)",
+                        text: "\(answerImages.count) page\(answerImages.count == 1 ? "" : "s") attached to read · \(totalImageSize)",
                         color: .studyViolet,
                         icon: "photo.on.rectangle"
                     )
@@ -578,20 +578,20 @@ struct MarkingView: View {
                 var extracted: [(String, String)] = []
                 var failures: [String] = []
                 var images: [MarkingImage] = []
+                var imageOnlyFiles = 0
                 for url in urls {
                     do {
-                        let text = try await Task.detached(priority: .userInitiated) {
-                            try PaperText.text(from: url)
+                        // One pass reads the file: the text Vision can find and the pages
+                        // themselves. Handwriting usually yields no text at all, so the
+                        // page image is what actually gets marked.
+                        let scanned = try await Task.detached(priority: .userInitiated) {
+                            try PaperText.scan(url)
                         }.value
-                        extracted.append((url.lastPathComponent, text))
-                        // Only the answer is worth sending as a picture: a rubric reads well
-                        // as text, and a photo of it would only cost tokens.
-                        if target == .answer,
-                           let payload = await Task.detached(priority: .userInitiated, operation: {
-                               PaperText.imagePayload(from: url)
-                           }).value {
-                            images.append(payload)
-                        }
+                        extracted.append((url.lastPathComponent, scanned.text))
+                        if scanned.text.isEmpty, scanned.hasImages { imageOnlyFiles += 1 }
+                        // Only the answer is worth sending as pictures: a rubric reads well
+                        // as text, and photographs of it would only cost tokens.
+                        if target == .answer { images.append(contentsOf: scanned.images) }
                     } catch {
                         failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
                     }
@@ -600,19 +600,33 @@ struct MarkingView: View {
                     for (name, text) in extracted {
                         switch target {
                         case .guidelines:
+                            guard !text.isEmpty else { continue }
                             guidelines += guidelines.isEmpty ? text : "\n\n\(text)"
                             if !guidelineFiles.contains(name) { guidelineFiles.append(name) }
                         case .answer:
-                            answer += answer.isEmpty ? text : "\n\n\(text)"
+                            // A handwritten page often has no text at all; the scan is the
+                            // answer, so the file is still listed and marked.
+                            if !text.isEmpty {
+                                answer += answer.isEmpty ? text : "\n\n\(text)"
+                            }
                             if !answerFiles.contains(name) { answerFiles.append(name) }
                         }
                     }
-                    for payload in images where answerImages.count < 6 {
-                        answerImages.append(payload)
+                    let remaining = PaperText.maximumPages - answerImages.count
+                    if remaining > 0 {
+                        answerImages.append(contentsOf: images.prefix(remaining))
                     }
-                    importMessage = failures.isEmpty
+                    let droppedPages = max(0, images.count - max(0, remaining))
+                    var notes = failures
+                    if imageOnlyFiles > 0 {
+                        notes.append("Handwriting attached as \(imageOnlyFiles == 1 ? "a scan" : "scans") — the marker reads the page itself, not text.")
+                    }
+                    if droppedPages > 0 {
+                        notes.append("\(droppedPages) page\(droppedPages == 1 ? "" : "s") beyond the \(PaperText.maximumPages)-page limit were not attached.")
+                    }
+                    importMessage = notes.isEmpty
                         ? (extracted.isEmpty ? "No readable text found in those files." : nil)
-                        : failures.joined(separator: "\n")
+                        : notes.joined(separator: "\n")
                     isLoadingFiles = false
                 }
             }

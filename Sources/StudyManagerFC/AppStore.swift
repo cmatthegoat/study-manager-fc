@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import Observation
+import PDFKit
 
 enum GameError: LocalizedError {
     case noCareer
@@ -12,6 +14,8 @@ enum GameError: LocalizedError {
     case levelTooLow(Int)
     case invalidPack
     case academyMaxLevel
+    case invalidPriceRise
+    case priceRiseCapped
     case noFixtures
     case invalidState
     case playerNotFound
@@ -28,6 +32,8 @@ enum GameError: LocalizedError {
         case .levelTooLow(let level): "Reach level \(level) to unlock this pack."
         case .invalidPack: "That pack is not available."
         case .academyMaxLevel: "Your youth academy is already at its highest level."
+        case .invalidPriceRise: "Enter an increase above zero — prices can only ever go up."
+        case .priceRiseCapped: "Prices are already raised as far as they go, at ten times the standard."
         case .noFixtures: "There are no fixtures ready to simulate."
         case .invalidState: "The season could not advance."
         case .playerNotFound: "That player is no longer at the club."
@@ -89,6 +95,17 @@ final class AppStore {
 
     @ObservationIgnored private let persistence: PersistenceStore
     @ObservationIgnored private var timer: Timer?
+    /// Career writes run one at a time, off the main thread, so a burst of taps never blocks
+    /// the UI and the file on disk is never written by two saves at once. Anything that reads
+    /// the career file goes through the same queue (see `flushPendingSaves`).
+    @ObservationIgnored private static let saveQueue = DispatchQueue(
+        label: "com.studymanagerfc.persistence",
+        qos: .utility
+    )
+    /// The most recent career waiting to be written. Every keystroke in a bound text field
+    /// commits, and writing a 60 KB file per keystroke kept the disk busy for no gain, so a
+    /// burst of edits now collapses into the latest state.
+    @ObservationIgnored private static let savePump = SavePump()
     @ObservationIgnored private var timerCreditedMinutes: Int
     /// Guards against the diagnostic self-test re-entering through its own AppStore.
     @ObservationIgnored private static var selfTestRunning = false
@@ -108,7 +125,12 @@ final class AppStore {
         if CommandLine.arguments.contains("--self-test"), !Self.selfTestRunning {
             Self.runSelfTest()
         }
+        if CommandLine.arguments.contains("--bench"), !Self.selfTestRunning {
+            Self.runBench()
+        }
 
+        // A previous instance may still be writing; never read the file out from under it.
+        Self.flushPendingSaves()
         do {
             state = try persistence.load() ?? GameState.fresh()
         } catch {
@@ -117,6 +139,10 @@ final class AppStore {
         }
         migrateLegacySaveIfNeeded()
         purgeCompletedTodos()
+        // Every price in the app reads the career's manual rise, so publish it before any
+        // view asks what a player costs.
+        PlayerPricing.manualRise = max(0, state.playerPriceRise)
+        TeamTheme.preset = themePreset
         TeamTheme.club = managedClub
         SubjectTheme.apply(state.subjectColors)
     }
@@ -176,6 +202,138 @@ final class AppStore {
         exit(0)
     }
 
+    /// Blocks until every queued career write has finished. Reads happen through this so a
+    /// reload never races the writer.
+    static func flushPendingSaves() {
+        saveQueue.sync {}
+    }
+
+    /// Writes the latest queued career, then checks again, until nothing is left. Runs on the
+    /// save queue, one write at a time.
+    private static func drainSaves() {
+        while let next = savePump.take() {
+            do {
+                try next.store.save(next.state)
+            } catch {
+                next.onError("Could not save your career: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Times the paths that make the app feel slow: building the transfer market, searching
+    /// it, naming and pricing its rows, looking clubs up, and reading and writing a career.
+    /// Pure measurement — it prints milliseconds per step and exits.
+    private static func runBench() {
+        Self.selfTestRunning = true   // the benchmark builds its own AppStore
+        func measure(_ label: String, _ repeats: Int = 1, _ body: () -> Void) {
+            let start = Date()
+            for _ in 0..<repeats { body() }
+            let ms = Date().timeIntervalSince(start) * 1000 / Double(repeats)
+            let padding = String(repeating: " ", count: max(1, 34 - label.count))
+            print(label + padding + String(format: "%8.2f ms", ms))
+        }
+
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("StudyManagerFC-bench-\(UUID().uuidString)", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let store = AppStore(persistence: PersistenceStore(baseDirectory: dir))
+        try? store.startCareer(with: "barcelona")
+        let market = store.transferMarket
+        print("market listings: \(market.count), database players: \(FcDatabase.shared.players.count), clubs: \(ClubDatabase.all.count)")
+
+        measure("market build (warm cache)", 5) { _ = store.transferMarket }
+        measure("market build (cold)", 3) {
+            store.invalidateMarketForBench()
+            _ = store.transferMarket
+        }
+        measure("name every listing", 5) {
+            var total = 0
+            for listing in market { total &+= store.playerName(for: listing).count }
+            if total < 0 { print("") }
+        }
+        measure("price every listing", 5) {
+            var total = 0
+            for listing in market { total &+= store.askingPrice(for: listing) }
+            if total < 0 { print("") }
+        }
+        measure("search 'a' over market", 5) {
+            var hits = 0
+            for listing in market where store.playerName(for: listing).lowercased().contains("a") { hits += 1 }
+            if hits < 0 { print("") }
+        }
+        measure("sort market by name", 5) {
+            _ = market.sorted { store.playerName(for: $0) < store.playerName(for: $1) }
+        }
+        // Exactly what a keystroke in the market search does: filter, then sort.
+        measure("view: search + sort", 5) {
+            var result = market.filter { $0.searchKey.contains("a") }
+            result.sort { $0.name < $1.name }
+            if result.count < 0 { print("") }
+        }
+        measure("filter by position", 5) {
+            var hits = 0
+            for listing in market where listing.record.position.group == .midfield { hits += 1 }
+            if hits < 0 { print("") }
+        }
+        measure("club lookup x1000", 3) {
+            for index in 0..<1_000 {
+                _ = ClubDatabase.club(for: ClubDatabase.all[index % ClubDatabase.all.count].id)
+            }
+        }
+        measure("pot number x1000", 3) {
+            for index in 0..<1_000 { _ = ClubDatabase.potNumber(for: ClubDatabase.all[index % ClubDatabase.all.count].id) }
+        }
+        measure("position access x10000", 3) {
+            for index in 0..<10_000 { _ = FcDatabase.shared.players[index % FcDatabase.shared.players.count].position }
+        }
+        // The derived values each screen recomputes on every redraw.
+        measure("standings", 5) { _ = store.standings }
+        measure("study aggregate", 5) { _ = store.studyAggregate }
+        measure("top prospects", 5) { _ = store.topProspects }
+        measure("squad metrics", 20) { _ = store.squadMetrics }
+        measure("sorted todos", 20) { _ = store.sortedTodos(store.state.todos) }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var payload = Data()
+        measure("encode career", 5) { payload = (try? encoder.encode(store.state)) ?? Data() }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        print(String(format: "career payload: %.0f KB", Double(payload.count) / 1024))
+        measure("decode career", 5) { _ = try? decoder.decode(GameState.self, from: payload) }
+        measure("commit (save queued)", 20) {
+            var draft = store.state
+            draft.xp += 1
+            store.commit(draft)
+        }
+        // Journal photos: a list of entries used to decode each PNG on every redraw.
+        let photoURL = dir.appendingPathComponent("bench-photo.png")
+        let canvas = NSImage(size: NSSize(width: 900, height: 700))
+        canvas.lockFocus()
+        NSColor.systemTeal.setFill()
+        NSRect(x: 0, y: 0, width: 900, height: 700).fill()
+        canvas.unlockFocus()
+        if let tiff = canvas.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: photoURL)
+        }
+        measure("photo decode from disk x50", 3) { for _ in 0..<50 { _ = NSImage(contentsOf: photoURL) } }
+        measure("photo from cache x50", 3) { for _ in 0..<50 { _ = JournalImageCache.image(named: "bench-photo.png", at: photoURL) } }
+
+        // A burst of edits, then wait for the disk — what fast typing does today.
+        measure("60 commits + flush", 3) {
+            for _ in 0..<60 {
+                var draft = store.state
+                draft.xp += 1
+                store.commit(draft)
+            }
+            Self.flushPendingSaves()
+        }
+        Self.flushPendingSaves()
+        try? fm.removeItem(at: dir)
+        exit(0)
+    }
+
     /// Exercises todo rewards, todo persistence and study-log deletion against a
     /// throwaway save directory.
     private static func runSelfTest() {
@@ -211,6 +369,7 @@ final class AppStore {
         state.recentSessions = [session]
         do {
             try store.save(state)
+            AppStore.flushPendingSaves()
             guard let loaded = try store.load(), loaded.todos.count == 1, loaded.todos[0].subtopicName == "Vectors" else {
                 print("SELF TEST FAIL: todo did not round-trip")
                 exit(1)
@@ -330,6 +489,66 @@ final class AppStore {
                 exit(1)
             }
 
+            // Handwritten uploads: a photo or an image-only PDF exported from an iPad has no
+            // text layer, so the page itself has to travel as an image. Vision finds nothing
+            // on a drawn page, and that must not be treated as an unreadable file.
+            let handwritingPNG = tempDir.appendingPathComponent("handwriting.png")
+            let handwritingPDF = tempDir.appendingPathComponent("handwriting.pdf")
+            let page = NSImage(size: NSSize(width: 900, height: 1_300))
+            page.lockFocus()
+            NSColor.white.setFill()
+            NSRect(x: 0, y: 0, width: 900, height: 1_300).fill()
+            NSColor.black.setStroke()
+            let ink = NSBezierPath()
+            ink.move(to: NSPoint(x: 80, y: 1_100))
+            ink.curve(to: NSPoint(x: 700, y: 1_150), controlPoint1: NSPoint(x: 200, y: 1_000), controlPoint2: NSPoint(x: 400, y: 1_250))
+            ink.lineWidth = 4
+            ink.stroke()
+            page.unlockFocus()
+            if let tiff = page.tiffRepresentation,
+               let rep = NSBitmapImageRep(data: tiff),
+               let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: handwritingPNG)
+            }
+            let pdf = PDFDocument()
+            if let pdfPage = PDFPage(image: page) {
+                pdf.insert(pdfPage, at: 0)
+            }
+            pdf.write(to: handwritingPDF)
+
+            let pngScan = try? PaperText.scan(handwritingPNG)
+            let pdfScan = try? PaperText.scan(handwritingPDF)
+            guard let pngScan, pngScan.images.count == 1, pngScan.images[0].mimeType == "image/jpeg",
+                  let pdfScan, pdfScan.images.count == 1, pdfScan.text.isEmpty else {
+                print("SELF TEST FAIL: a handwritten page was not turned into an image for the marker")
+                exit(1)
+            }
+            let handwrittenRequest = MarkingRequest(
+                subject: .ext1Maths,
+                title: "Handwritten",
+                totalMarks: 10,
+                answerText: pdfScan.text,
+                guidelinesText: "",
+                comments: "",
+                answerImages: pdfScan.images
+            )
+            let handwrittenPrompt = MarkingPrompts.userPrompt(
+                handwrittenRequest,
+                guidelines: "",
+                comments: "",
+                paper: pdfScan.text
+            )
+            guard handwrittenPrompt.contains("Read the handwriting directly"),
+                  MarkingPrompts.userPrompt(
+                      MarkingRequest(subject: .ext1Maths, title: "Typed", totalMarks: 10, answerText: "x = 5", guidelinesText: "", comments: ""),
+                      guidelines: "",
+                      comments: "",
+                      paper: "x = 5"
+                  ).contains("Read the handwriting directly") == false else {
+                print("SELF TEST FAIL: the marking prompt does not tell the model to read a scanned page")
+                exit(1)
+            }
+
             // OpenRouter wiring: the request the cloud marker would send carries the chosen
             // model, the shared prompt, the JSON-only response format and any scan as a
             // base64 data URL — and never the key.
@@ -390,6 +609,7 @@ final class AppStore {
             }
 
             app.deleteStudySession(session.id)
+            AppStore.flushPendingSaves()
             guard let reloaded = try store.load(),
                   reloaded.todos.count == 3,
                   !reloaded.todos.contains(where: { $0.id == todoID }),
@@ -605,11 +825,55 @@ final class AppStore {
             var intakeState = GameState.fresh()
             intakeState.managedClubID = "arsenal"
             let delivered = AppStore.deliverAcademyIntake(level: 3, season: 1, into: &intakeState)
-            guard delivered.count == GameRules.academyIntakePerSeason,
-                  intakeState.players.count == GameRules.academyIntakePerSeason,
+            let levelThreeProfile = GameRules.academyIntakeProfile(3)
+            guard delivered.count == levelThreeProfile.count,
+                  intakeState.players.count == levelThreeProfile.count,
                   intakeState.freeAgents.isEmpty,
                   delivered.allSatisfy({ $0.potential >= $0.overall && $0.age <= 18 }) else {
                 print("SELF TEST FAIL: an academy intake did not reach the squad")
+                exit(1)
+            }
+
+            // Every level has its own batch size and its own bands, the ceiling is rolled
+            // inside the band, and an academy decays a level each new season but never dies.
+            var batchCounts: [Int] = []
+            for level in 1...GameRules.maxAcademyLevel {
+                let profile = GameRules.academyIntakeProfile(level)
+                batchCounts.append(profile.count)
+                let batch = PlayerFactory.makeAcademyIntake(level: level, season: 1)
+                guard batch.count == profile.count,
+                      batch.allSatisfy({ prospect in
+                          profile.overall.contains(prospect.overall)
+                              && profile.potential.contains(prospect.potential)
+                              && prospect.potential >= prospect.overall
+                      }) else {
+                    print("SELF TEST FAIL: a level \(level) intake fell outside its rating bands")
+                    exit(1)
+                }
+            }
+            guard batchCounts == [1, 2, 3, 4, 4],
+                  GameRules.academyIntakeCount(5) == 4,
+                  GameRules.academyUpgradeCost(from: 1) == 95_000,
+                  GameRules.academyUpgradeCost(from: 4) == 95_000,
+                  GameRules.academyUpgradeCost(from: 5) == nil,
+                  GameRules.decayedAcademyLevel(5) == 4,
+                  GameRules.decayedAcademyLevel(1) == 1,
+                  GameRules.academyLevel(forPot: 1) == 5,
+                  GameRules.academyLevel(forPot: 4) == 1 else {
+                print("SELF TEST FAIL: academy levels, intake sizes, upgrade cost or decay are wrong")
+                exit(1)
+            }
+
+            // Clubs you do not manage graduate boys at their own pot's level.
+            let worldIntake = PlayerFactory.makeWorldAcademyIntake(season: 2, count: 24)
+            guard worldIntake.count == 24,
+                  worldIntake.allSatisfy({ graduate in
+                      guard let clubID = graduate.clubID else { return false }
+                      let profile = GameRules.academyIntakeProfile(ClubDatabase.academyLevel(for: clubID))
+                      return profile.overall.contains(graduate.overall)
+                          && profile.potential.contains(graduate.potential)
+                  }) else {
+                print("SELF TEST FAIL: a world academy intake did not follow its club's pot")
                 exit(1)
             }
 
@@ -644,6 +908,7 @@ final class AppStore {
                 print("SELF TEST FAIL: changing team lost career data, left old club ids or did not start a new season")
                 exit(1)
             }
+            AppStore.flushPendingSaves()
             guard (try? mover.changeClub(to: "real-madrid")) == nil,
                   let movedSave = try moveStore.load(),
                   movedSave.managedClubID == "real-madrid",
@@ -822,6 +1087,73 @@ final class AppStore {
                 exit(1)
             }
 
+            // A club never answers a bid with a lower number: one Club Cash under the asking
+            // price used to draw a "counter" beneath the bid itself.
+            let haggleStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("haggle", isDirectory: true))
+            let haggler = AppStore(persistence: haggleStore)
+            try haggler.startCareer(with: "arsenal")
+            guard let haggledListing = haggler.transferMarket.first else {
+                print("SELF TEST FAIL: the market was empty for the negotiation check")
+                exit(1)
+            }
+            haggler.beginNegotiation(for: haggledListing)
+            let askingBeforeBid = haggler.negotiation?.askingPrice ?? 0
+            let cheekyBid = max(1, askingBeforeBid - 1)
+            haggler.submitOffer(cheekyBid)
+            guard let haggled = haggler.negotiation,
+                  (haggled.status == .signed ? haggled.lastOffer == cheekyBid : haggled.askingPrice > cheekyBid) else {
+                print("SELF TEST FAIL: a bid of \(cheekyBid) against \(askingBeforeBid) drew a counter of \(haggler.negotiation?.askingPrice ?? 0)")
+                exit(1)
+            }
+
+            // A manual price rise sticks, stacks on the asking price, and never goes back:
+            // negative and zero percentages are refused and leave the market untouched.
+            let raiseStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("price-raise", isDirectory: true))
+            let raiser = AppStore(persistence: raiseStore)
+            try raiser.startCareer(with: "arsenal")
+            guard let risingListing = raiser.transferMarket.first else {
+                print("SELF TEST FAIL: the market was empty for the price-rise check")
+                exit(1)
+            }
+            let standardAsk = raiser.askingPrice(for: risingListing)
+            try raiser.raisePlayerPrices(percent: 35)
+            func askNow() -> Int {
+                raiser.askingPrice(for: raiser.transferMarket.first { $0.id == risingListing.id } ?? risingListing)
+            }
+            let raisedAsk = askNow()
+            let negativeRefused = (try? raiser.raisePlayerPrices(percent: -50)) == nil
+            let zeroRefused = (try? raiser.raisePlayerPrices(percent: 0)) == nil
+            let askAfterRefusals = askNow()
+            AppStore.flushPendingSaves()
+            let storedRise = try raiseStore.load()?.playerPriceRise
+            guard Double(raisedAsk) >= Double(standardAsk) * 1.34,
+                  Double(raisedAsk) <= Double(standardAsk) * 1.37,
+                  negativeRefused, zeroRefused,
+                  askAfterRefusals == raisedAsk,
+                  raiser.state.playerPriceRise > 0,
+                  raiser.state.lastPriceRisePercent > 0,
+                  raiser.state.lastPriceRiseAt != nil,
+                  storedRise == raiser.state.playerPriceRise else {
+                print("SELF TEST FAIL: a manual price rise did not stick or could be undone (\(standardAsk) → \(raisedAsk), then \(askAfterRefusals), stored \(String(describing: storedRise)))")
+                exit(1)
+            }
+            // Income has to keep pace with the prices those rises reach, and the palette
+            // preset belongs to the career rather than a transient setting.
+            raiser.setThemePreset(.deep)
+            AppStore.flushPendingSaves()
+            guard GameRules.startingCash == 2_500,
+                  GameState.fresh().clubCash == GameRules.startingCash,
+                  StudyReward.calculate(kind: .homework, subject: .ext1Maths, minutes: 90, marksObtained: nil, marksTotal: nil).cash >= 2_400,
+                  ThemePreset.allCases.count == 5,
+                  raiser.themePreset == .deep,
+                  (try raiseStore.load())?.themePreset == ThemePreset.deep.rawValue else {
+                print("SELF TEST FAIL: cash income, starting cash or the theme preset are wrong")
+                exit(1)
+            }
+
+            // Later checks price players of their own; the test career is the only one alive.
+            PlayerPricing.manualRise = 0
+
             // Timer review: a paused session is filed only when confirmed, and what lands
             // is the type, subject and marks chosen in the review sheet.
             let timerStore = PersistenceStore(baseDirectory: tempDir.appendingPathComponent("timer", isDirectory: true))
@@ -863,7 +1195,7 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes reaching the squad, timer sessions filed only after review")
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, handwritten pages turned into page images, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, five club-relative theme presets, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -936,7 +1268,7 @@ final class AppStore {
                     contentsOf: PlayerFactory.makeAcademyIntake(
                         level: draft.academyLevel,
                         season: draft.seasonNumber,
-                        count: owed * GameRules.academyIntakePerSeason
+                        count: owed * GameRules.academyIntakeCount(draft.academyLevel)
                     )
                 )
             }
@@ -1154,6 +1486,15 @@ final class AppStore {
         let league: String?
         let isUserListing: Bool     // true if the user's club placed this player for sale
         let listingPrice: Int?      // price the user set; nil = askingPrice-driven negotiation
+        /// The name this row displays. Worked out once when the market is built rather than
+        /// on every filter and every comparison of a sort, which is what made search crawl.
+        var name: String = ""
+        /// Name, club and position folded into one lowercased string, so a keystroke costs a
+        /// substring test per row instead of three allocations.
+        var searchKey: String = ""
+        /// What the selling club wants, fixed when the market is built so filtering and
+        /// sorting by price never recompute valuations.
+        var askingPrice: Int = 0
 
         var id: Int { record.id }
         var fee: Int { PlayerPricing.valuation(overall: record.ovr, potential: record.potential, age: record.age) }
@@ -1195,7 +1536,7 @@ final class AppStore {
 
     /// The market is rebuilt from the database whenever the squad changes, so a signed
     /// player disappears from it immediately.
-    @ObservationIgnored private var marketCache: (clubID: String, owned: Set<Int>, listings: [TransferListing])?
+    @ObservationIgnored private var marketCache: (clubID: String, owned: Set<Int>, rise: Double, listings: [TransferListing])?
 
     /// Players below this overall are not shown on the transfer market.
     static let minimumMarketOverall = 59
@@ -1203,7 +1544,10 @@ final class AppStore {
     var transferMarket: [TransferListing] {
         guard let userClubID = state.managedClubID else { return [] }
         let owned = Set(state.players.compactMap(\.dbID))
-        if let cache = marketCache, cache.clubID == userClubID, cache.owned == owned {
+        // The asking price is baked into each listing, so the cache is keyed on the price
+        // rise too: a manual raise rebuilds the market instead of serving old prices.
+        let rise = state.playerPriceRise
+        if let cache = marketCache, cache.clubID == userClubID, cache.owned == owned, cache.rise == rise {
             return cache.listings
         }
         let database = FcDatabase.shared
@@ -1216,6 +1560,7 @@ final class AppStore {
             if record.club == userClubID { continue }
             if record.ovr < Self.minimumMarketOverall { continue }
             let owner = database.club(record.club)
+            let name = database.squadName(for: record)
             listings.append(
                 TransferListing(
                     record: record,
@@ -1224,7 +1569,10 @@ final class AppStore {
                     clubName: owner?.name ?? record.club,
                     league: owner?.league,
                     isUserListing: false,
-                    listingPrice: nil
+                    listingPrice: nil,
+                    name: name,
+                    searchKey: Self.marketSearchKey(name: name, clubName: owner?.name ?? record.club, record: record),
+                    askingPrice: Self.askingPrice(record: record, clubID: record.club)
                 )
             )
         }
@@ -1236,15 +1584,20 @@ final class AppStore {
             if negotiation?.listing.record.id == player.dbID { continue }
             guard let fcPlayer = FcDatabase.shared.player(id: player.dbID ?? 0) else { continue }
             if fcPlayer.ovr < Self.minimumMarketOverall { continue }
+            let clubName = ClubDatabase.club(for: userClubID)?.name ?? userClubID
+            let name = FcDatabase.shared.squadName(for: fcPlayer)
             listings.append(
                 TransferListing(
                     record: fcPlayer,
                     clubID: userClubID,
                     club: ClubDatabase.club(for: userClubID),
-                    clubName: ClubDatabase.club(for: userClubID)?.name ?? userClubID,
+                    clubName: clubName,
                     league: nil,
                     isUserListing: true,
-                    listingPrice: nil  // Will be set by user or algorithm
+                    listingPrice: nil,  // Will be set by user or algorithm
+                    name: name,
+                    searchKey: Self.marketSearchKey(name: name, clubName: clubName, record: fcPlayer),
+                    askingPrice: Self.askingPrice(record: fcPlayer, clubID: userClubID)
                 )
             )
         }
@@ -1256,16 +1609,26 @@ final class AppStore {
             if lhs.clubName != rhs.clubName { return lhs.clubName < rhs.clubName }
             return lhs.record.id < rhs.record.id
         }
-        marketCache = (userClubID, owned, listings)
+        marketCache = (userClubID, owned, rise, listings)
         return listings
+    }
+
+    /// Drops the cached market so the benchmark can time a cold build.
+    func invalidateMarketForBench() {
+        marketCache = nil
     }
 
     /// What a club expects before it will sell: the player's value plus a premium for how
     /// important they are to that club and how big the club is.
     func askingPrice(for listing: TransferListing) -> Int {
-        let value = listing.fee
-        let clubRating = ClubDatabase.club(for: listing.clubID)?.rating ?? 75
-        let gap = listing.record.ovr - clubRating
+        listing.askingPrice
+    }
+
+    /// The same sum the market bakes into each listing when it is built.
+    static func askingPrice(record: FcPlayer, clubID: String) -> Int {
+        let value = PlayerPricing.valuation(overall: record.ovr, potential: record.potential, age: record.age)
+        let clubRating = ClubDatabase.club(for: clubID)?.rating ?? 75
+        let gap = record.ovr - clubRating
         let base: Double
         switch gap {
         case 4...: base = 1.55
@@ -1302,8 +1665,12 @@ final class AppStore {
     }
 
     func playerName(for listing: TransferListing) -> String {
-        let database = FcDatabase.shared
-        return listing.record.disambiguatedName(in: database.squad(for: listing.clubID), database: database)
+        listing.name
+    }
+
+    /// Everything a search can match, folded once when a listing is built.
+    static func marketSearchKey(name: String, clubName: String, record: FcPlayer) -> String {
+        "\(name) \(clubName) \(record.position.displayName)".lowercased()
     }
 
     /// One round of haggling. The club holds firm near its asking price, softens a little
@@ -1322,22 +1689,27 @@ final class AppStore {
         }
 
         let ratio = Double(offer) / Double(max(1, deal.askingPrice))
-        if ratio >= 0.9 {
-            deal.askingPrice = Int(Double(deal.askingPrice) * 0.96)
-            deal.patience -= 10
+        let serious = ratio >= 0.9
+        let discount: Double? = serious ? 0.96 : (ratio >= 0.72 ? 0.97 : nil)
+        if let discount {
+            let counter = Int(Double(deal.askingPrice) * discount)
+            // A club never answers a bid with a lower number. Once haggling has worn its
+            // price down to the offer itself, accepting the offer is the only reply left.
+            if counter <= offer {
+                deal.status = .signed
+                deal.messages.append(NegotiationMessage(fromClub: true, text: "\(deal.listing.clubName) accept \(offer.formatted()). The paperwork is done."))
+                negotiation = deal
+                completeSigning(deal.listing, price: offer)
+                return
+            }
+            deal.askingPrice = counter
+            deal.patience -= serious ? 10 : 24
             deal.messages.append(
                 NegotiationMessage(
                     fromClub: true,
-                    text: "Close. \(deal.listing.clubName) counters at \(deal.askingPrice.formatted())."
-                )
-            )
-        } else if ratio >= 0.72 {
-            deal.askingPrice = Int(Double(deal.askingPrice) * 0.97)
-            deal.patience -= 24
-            deal.messages.append(
-                NegotiationMessage(
-                    fromClub: true,
-                    text: "That is short of our valuation. Meet \(deal.askingPrice.formatted()) and we can talk."
+                    text: serious
+                        ? "Close. \(deal.listing.clubName) counters at \(counter.formatted())."
+                        : "That is short of our valuation. Meet \(counter.formatted()) and we can talk."
                 )
             )
         } else {
@@ -1588,20 +1960,29 @@ final class AppStore {
         sortedTodos(state.todos.filter { $0.subtopicID == id })
     }
 
-    /// Open tasks first, then by priority (P1 at the top, unmarked last), then oldest first.
+    /// Open tasks first, then by priority (P1 at the top, unmarked last), then the soonest
+    /// deadline (undated tasks last), then oldest first.
     private func sortedTodos(_ items: [TodoItem]) -> [TodoItem] {
         items.sorted { lhs, rhs in
             if lhs.isCompleted != rhs.isCompleted { return !lhs.isCompleted }
             let left = lhs.priority ?? Int.max
             let right = rhs.priority ?? Int.max
             if left != right { return left < right }
+            if let leftDay = lhs.dueDay, let rightDay = rhs.dueDay {
+                if leftDay != rightDay { return leftDay < rightDay }
+            } else if lhs.dueDay == nil, rhs.dueDay != nil {
+                return false
+            } else if lhs.dueDay != nil, rhs.dueDay == nil {
+                return true
+            }
             return lhs.createdAt < rhs.createdAt
         }
     }
 
     /// Adds a task, honouring inline directives: `p2 #Ext 2 Maths - Complex Numbers: finish 4.2`
-    /// files the task under Ext 2 Maths and its Complex Numbers topic at priority 2.
-    func addTodo(_ rawTitle: String, subject defaultSubject: StudySubject = .other, subtopicID defaultSubtopicID: UUID? = nil) -> TodoItem? {
+    /// files the task under Ext 2 Maths and its Complex Numbers topic at priority 2. A due
+    /// date is stored as its calendar day, so the task groups with everything else due then.
+    func addTodo(_ rawTitle: String, subject defaultSubject: StudySubject = .other, subtopicID defaultSubtopicID: UUID? = nil, dueDate: Date? = nil) -> TodoItem? {
         guard hasCareer else { return nil }
         let input = TodoInput.parse(rawTitle, subtopics: state.subtopics)
         let trimmed = input.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1635,7 +2016,7 @@ final class AppStore {
             subtopicName: resolvedSubtopic?.name,
             isCompleted: false,
             createdAt: Date(),
-            dueDate: nil,
+            dueDate: dueDate.map { Calendar.current.startOfDay(for: $0) },
             priority: input.priority
         )
         draft.todos.append(todo)
@@ -1648,6 +2029,22 @@ final class AppStore {
         var draft = state
         draft.todos.removeAll { $0.id == id }
         commit(draft)
+    }
+
+    /// Every open task due on one calendar day, in the board's usual order.
+    func todosDue(on day: Date) -> [TodoItem] {
+        let target = Calendar.current.startOfDay(for: day)
+        return sortedTodos(state.todos.filter { !$0.isCompleted && $0.dueDay == target })
+    }
+
+    /// Open tasks with a due date that has already passed.
+    var overdueTodos: [TodoItem] {
+        sortedTodos(state.todos.filter(\.isOverdue))
+    }
+
+    /// Open tasks with no deadline, so the calendar can show what still needs one.
+    var undatedTodos: [TodoItem] {
+        sortedTodos(state.todos.filter { $0.dueDate == nil && !$0.isCompleted })
     }
 
     /// Club Cash earned for completing a todo, scaled by its subject's cash multiplier.
@@ -1917,6 +2314,38 @@ final class AppStore {
         var draft = state
         draft.clubCash -= cost
         draft.academyLevel += 1
+        commit(draft)
+    }
+
+    /// The most a manual price rise may reach in total: ten times the standard price.
+    static let maxPlayerPriceRise = 9.0
+
+    /// Raises every price in the game by the user's own percentage. Raises stack on what the
+    /// market already asks and can never be undone: a zero or negative percentage is refused
+    /// outright, so no price can ever be walked back down.
+    func raisePlayerPrices(percent: Double) throws {
+        guard hasCareer else { throw GameError.noCareer }
+        guard percent.isFinite, percent > 0, percent <= 200 else { throw GameError.invalidPriceRise }
+        let proposed = (1 + state.playerPriceRise) * (1 + percent / 100) - 1
+        guard proposed <= Self.maxPlayerPriceRise else { throw GameError.priceRiseCapped }
+        var draft = state
+        draft.playerPriceRise = proposed
+        draft.lastPriceRisePercent = percent
+        draft.lastPriceRiseAt = Date()
+        commit(draft)
+    }
+
+    /// The colour preset the career is running, defaulting to the club's plain colours.
+    var themePreset: ThemePreset {
+        ThemePreset(rawValue: state.themePreset) ?? .club
+    }
+
+    /// Switches the preset. Every preset is a transform of the club's own two colours, so
+    /// the palette still belongs to the club being managed.
+    func setThemePreset(_ preset: ThemePreset) {
+        guard hasCareer else { return }
+        var draft = state
+        draft.themePreset = preset.rawValue
         commit(draft)
     }
 
@@ -2251,11 +2680,7 @@ final class AppStore {
     /// They belong in `players`, not the free-agent pool: the pool is only a source the
     /// pack and market code draws from, and no screen ever lists its contents.
     static func deliverAcademyIntake(level: Int, season: Int, into draft: inout GameState) -> [Player] {
-        let intake = PlayerFactory.makeAcademyIntake(
-            level: level,
-            season: season,
-            count: GameRules.academyIntakePerSeason
-        )
+        let intake = PlayerFactory.makeAcademyIntake(level: level, season: season)
         draft.players.append(contentsOf: intake)
         return intake
     }
@@ -2345,12 +2770,15 @@ final class AppStore {
             !draft.players.contains { $0.id == offer.playerID }
         }
         draft.seasonNumber += 1
+        // A season of neglect costs the academy a level: the intake shrinks and the boys get
+        // weaker unless the manager keeps investing in it.
+        draft.academyLevel = GameRules.decayedAcademyLevel(draft.academyLevel)
         var youthCount = 10
-        let prospects = PlayerFactory.makeYouthProspects(season: draft.seasonNumber, count: youthCount)
+        let prospects = PlayerFactory.makeWorldAcademyIntake(season: draft.seasonNumber, count: youthCount)
         draft.freeAgents.append(contentsOf: prospects)
-        // The academy promotes a handful of teenagers straight into the senior squad every
-        // season so ageing squads can be replenished without the transfer market.
-        draft.players.append(contentsOf: PlayerFactory.makeAcademyProspects(season: draft.seasonNumber, count: GameRules.academyIntakePerSeason))
+        // The academy promotes its batch straight into the senior squad every season too, so
+        // ageing squads can be replenished without the transfer market.
+        draft.players.append(contentsOf: PlayerFactory.makeAcademyIntake(level: draft.academyLevel, season: draft.seasonNumber))
         if draft.freeAgents.count < 48 {
             let extraCount = 48 - draft.freeAgents.count
             let extra = PlayerFactory.makeFreeAgentPool(season: draft.seasonNumber, count: extraCount)
@@ -2553,11 +2981,19 @@ final class AppStore {
         // published and every view redraws in the club's colours.
         TeamTheme.club = ClubDatabase.club(for: draft.managedClubID)
         SubjectTheme.apply(draft.subjectColors)
-        state = draft
-        do {
-            try persistence.save(draft)
-        } catch {
-            saveErrorMessage = "Could not save your career: \(error.localizedDescription)"
+        PlayerPricing.manualRise = max(0, draft.playerPriceRise)
+        TeamTheme.preset = ThemePreset(rawValue: draft.themePreset) ?? .club
+        state = draft   // the UI updates immediately
+
+        // Write to disk off the main thread. The serial queue keeps writes in order and stops
+        // them overlapping, and because the job is queued before `commit` returns, anything
+        // that reads the file afterwards (a reload, the diagnostic self-test) waits for it.
+        let store = persistence
+        let onError: @Sendable (String) -> Void = { [weak self] message in
+            Task { @MainActor in self?.saveErrorMessage = message }
+        }
+        if Self.savePump.submit(store, draft, onError: onError) {
+            Self.saveQueue.async { Self.drainSaves() }
         }
     }
 

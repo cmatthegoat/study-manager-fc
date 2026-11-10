@@ -5,6 +5,8 @@ struct DashboardView: View {
 
     /// Set by the shell so the "recent study" card can jump to the full, searchable log.
     var onOpenLog: (() -> Void)? = nil
+    /// Set by the shell so the week card can jump to the full month calendar.
+    var onOpenCalendar: (() -> Void)? = nil
 
     var body: some View {
         ScrollView {
@@ -20,6 +22,7 @@ struct DashboardView: View {
                         FocusTimerCard()
                         QuickLogCard()
                         QuickTodoCard()
+                        WeekAheadCard(onOpenCalendar: onOpenCalendar)
                         JournalNudgeCard()
                     }
                     .frame(maxWidth: .infinity)
@@ -113,6 +116,7 @@ private struct QuickTodoCard: View {
     @State private var draftTitle = ""
     @State private var selectedSubject: StudySubject = .other
     @State private var selectedSubtopicID: UUID?
+    @State private var draftDueDate: Date?
 
     private var selectedSubtopics: [Subtopic] {
         store.subtopics(for: selectedSubject)
@@ -161,6 +165,8 @@ private struct QuickTodoCard: View {
                 .disabled(draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
+            DueDateField(dueDate: $draftDueDate)
+
             HStack(spacing: 6) {
                 Pill(
                     text: "+\(store.todoReward(for: effectiveSubject)) cash when completed (×\(multiplierText(effectiveSubject.cashMultiplier)))",
@@ -182,8 +188,147 @@ private struct QuickTodoCard: View {
     }
 
     private func add() {
-        guard store.addTodo(draftTitle, subject: selectedSubject, subtopicID: selectedSubtopicID) != nil else { return }
+        guard store.addTodo(
+            draftTitle,
+            subject: selectedSubject,
+            subtopicID: selectedSubtopicID,
+            dueDate: draftDueDate
+        ) != nil else { return }
         draftTitle = ""
+        draftDueDate = nil
+    }
+}
+
+/// The week at a glance: today plus the six days after it, with what is due on each. A
+/// selected day opens its tasks in place, so the dashboard can clear work without a detour
+/// through the full month calendar.
+private struct WeekAheadCard: View {
+    @Environment(AppStore.self) private var store
+    var onOpenCalendar: (() -> Void)? = nil
+
+    @State private var selectedDay = Calendar.current.startOfDay(for: Date())
+
+    private let calendar = Calendar.current
+
+    private var days: [Date] {
+        let start = calendar.startOfDay(for: Date())
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+    }
+
+    private var weekTaskCount: Int {
+        days.reduce(0) { $0 + store.todosDue(on: $1).count }
+    }
+
+    private var overdueCount: Int {
+        store.overdueTodos.count
+    }
+
+    private var selectedTasks: [TodoItem] {
+        store.todosDue(on: selectedDay)
+    }
+
+    private var subtitle: String {
+        var parts = ["\(weekTaskCount) task\(weekTaskCount == 1 ? "" : "s") due in the next seven days"]
+        if overdueCount > 0 {
+            parts.append("\(overdueCount) overdue")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
+                SectionHeader(
+                    title: "Week Ahead",
+                    subtitle: subtitle,
+                    symbol: "calendar"
+                )
+                if let onOpenCalendar {
+                    Button("Open calendar", action: onOpenCalendar)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Neon.accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Neon.accent.opacity(0.14), in: Capsule())
+                        .overlay(Capsule().stroke(Neon.accent.opacity(0.45), lineWidth: 0.75))
+                        .help("See the whole month")
+                }
+            }
+
+            HStack(spacing: 6) {
+                ForEach(days, id: \.self) { day in
+                    dayButton(day)
+                }
+            }
+
+            if selectedTasks.isEmpty {
+                Text(calendar.isDateInToday(selectedDay)
+                     ? "Nothing due today. Set a due date on a task and it will show up here."
+                     : "Nothing due on this day.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(selectedTasks) { todo in
+                        TodoItemRow(todo: todo)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(padding: 18)
+    }
+
+    private func dayButton(_ day: Date) -> some View {
+        let tasks = store.todosDue(on: day)
+        let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
+        let isToday = calendar.isDateInToday(day)
+
+        return Button {
+            selectedDay = day
+        } label: {
+            VStack(spacing: 4) {
+                Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                    .font(.system(size: 8, weight: .black, design: .rounded))
+                    .tracking(0.6)
+                    .foregroundStyle(isToday ? Color.studyGold : Color.studyMuted)
+                Text("\(calendar.component(.day, from: day))")
+                    .font(.system(size: 15, weight: isToday ? .black : .semibold, design: .rounded))
+                    .foregroundStyle(isToday ? Color.studyGold : Color.primary)
+                    .monospacedDigit()
+                HStack(spacing: 2) {
+                    if tasks.isEmpty {
+                        Circle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 4, height: 4)
+                    } else {
+                        ForEach(Array(tasks.prefix(3))) { todo in
+                            Circle()
+                                .fill(SubjectTheme.color(for: todo.subject ?? .other))
+                                .frame(width: 4, height: 4)
+                        }
+                    }
+                }
+                .frame(height: 5)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? Neon.accent.opacity(0.20) : Color.white.opacity(0.035))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(
+                        isSelected ? Neon.accent.opacity(0.85) : Color.white.opacity(0.07),
+                        lineWidth: isSelected ? 1.4 : 1
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(tasks.isEmpty ? "Nothing due" : "\(tasks.count) task\(tasks.count == 1 ? "" : "s") due")
     }
 }
 

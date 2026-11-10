@@ -28,6 +28,7 @@ struct AppSidebar: View {
             }
 
             Spacer(minLength: 12)
+            themePicker
             levelCard
         }
         .padding(14)
@@ -104,6 +105,26 @@ struct AppSidebar: View {
         }
         .buttonStyle(.plain)
         .help(section.title)
+    }
+
+    /// The palette preset. Every preset keeps the board in the club's own two colours.
+    private var themePicker: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("THEME")
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .tracking(1)
+                .foregroundStyle(.secondary)
+            BentoMenu(
+                selection: Binding(
+                    get: { store.themePreset },
+                    set: { store.setThemePreset($0) }
+                ),
+                options: ThemePreset.allCases.map { BentoOption($0.displayName, value: $0) },
+                width: 190
+            )
+        }
+        .padding(.horizontal, 2)
+        .padding(.bottom, 12)
     }
 
     private var levelCard: some View {

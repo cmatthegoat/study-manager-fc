@@ -74,8 +74,12 @@ final class FcDatabase {
     private let clubByID: [String: FcClub]
     private let nationByCode: [String: FcNation]
     private let playersByClub: [String: [FcPlayer]]
+    private let playerByID: [Int: FcPlayer]
     /// Display names, allocated once so no two players in the database share one.
     private var allocatedNames: [Int: String] = [:]
+    /// Disambiguated names per club squad, built on first use. Naming a squad used to scan
+    /// the squad once per player, which made the transfer list crawl.
+    private var squadNameCache: [String: [Int: String]] = [:]
 
     /// True when the database resource was found and decoded.
     var isLoaded: Bool { !players.isEmpty }
@@ -87,6 +91,7 @@ final class FcDatabase {
         self.clubByID = Dictionary(clubs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.nationByCode = Dictionary(nations.map { ($0.code, $0) }, uniquingKeysWith: { first, _ in first })
         self.playersByClub = Dictionary(grouping: players, by: \.club)
+        self.playerByID = Dictionary(players.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.allocatedNames = Self.allocateNames(for: players)
     }
 
@@ -141,7 +146,21 @@ final class FcDatabase {
     }
 
     func player(id: Int) -> FcPlayer? {
-        players.first { $0.id == id }
+        playerByID[id]
+    }
+
+    /// The name a player is shown under inside his club's squad, with teammate clashes
+    /// disambiguated. Each squad is named once and remembered.
+    func squadName(for player: FcPlayer) -> String {
+        if let cached = squadNameCache[player.club]?[player.id] { return cached }
+        let squad = playersByClub[player.club] ?? []
+        var names: [Int: String] = [:]
+        names.reserveCapacity(squad.count)
+        for member in squad {
+            names[member.id] = member.disambiguatedName(in: squad, database: self)
+        }
+        squadNameCache[player.club] = names
+        return names[player.id] ?? displayName(for: player)
     }
 
     /// A stable display name. The data file wins when it carries one; otherwise the name
@@ -226,8 +245,9 @@ final class FcDatabase {
         .centerBack, .centralMid
     ]
 
-    /// Mapping from database position strings to PlayerPosition enum values.
-    static var positionMapping: [String: PlayerPosition] {
+    /// Mapping from database position strings to PlayerPosition enum values. Built once:
+    /// this used to hand back a fresh dictionary on every player access.
+    static let positionMapping: [String: PlayerPosition] = {
         let mapping: [String: PlayerPosition] = [
             "GK": .goalkeeper,
             "LB": .leftBack,
@@ -244,7 +264,7 @@ final class FcDatabase {
             "RM": .rightWing,
         ]
         return mapping
-    }
+    }()
 
     /// Builds a squad for a club, best players first, covering every position the lineup
     /// needs. Extra players are kept so the squad list feels like a real club.

@@ -155,23 +155,72 @@ enum MarkingKeychain {
 struct OpenRouterModel: Identifiable, Decodable, Hashable {
     struct Architecture: Decodable, Hashable {
         let inputModalities: [String]?
+        let outputModalities: [String]?
 
         enum CodingKeys: String, CodingKey {
             case inputModalities = "input_modalities"
+            case outputModalities = "output_modalities"
         }
+    }
+
+    struct Pricing: Decodable, Hashable {
+        /// US dollars per input token, as a decimal string.
+        let prompt: String?
+        /// US dollars per output token, as a decimal string.
+        let completion: String?
     }
 
     let id: String
     let name: String?
     let architecture: Architecture?
+    let contextLength: Int?
+    let pricing: Pricing?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, architecture, pricing
+        case contextLength = "context_length"
+    }
 
     /// True for models that accept images, which is what a scanned paper needs.
     var supportsImages: Bool {
         (architecture?.inputModalities ?? []).contains("image")
     }
 
+    /// True when the model writes text, which is the only thing a marked paper can come back as.
+    var writesText: Bool {
+        let outputs = architecture?.outputModalities ?? ["text"]
+        return outputs.contains("text")
+    }
+
     var displayName: String {
         name?.isEmpty == false ? name! : id
+    }
+
+    /// Rounded cost of a million input tokens, for the picker's subtitle.
+    var promptCostPerMillion: Double? {
+        guard let prompt = pricing?.prompt, let perToken = Double(prompt) else { return nil }
+        return perToken * 1_000_000
+    }
+
+    var completionCostPerMillion: Double? {
+        guard let completion = pricing?.completion, let perToken = Double(completion) else { return nil }
+        return perToken * 1_000_000
+    }
+}
+
+/// What `GET /api/v1/key` says about the key: whether it is valid, and whether anything is
+/// left on it. The key itself is never echoed back by OpenRouter or stored here.
+struct OpenRouterKeyInfo: Hashable {
+    var label: String?
+    var limitRemaining: Double?
+    var usage: Double?
+    var isFreeTier: Bool
+    var freeModelRequestsRemaining: Int?
+
+    /// True when the account can pay for a paid model at all.
+    var hasPaidCredit: Bool {
+        guard let limitRemaining else { return true }
+        return limitRemaining > 0
     }
 }
 
@@ -263,7 +312,7 @@ enum MarkingPrompts {
         \(comments.isEmpty ? "(none)" : comments)
 
         STUDENT'S ANSWER
-        \(paper)
+        \(answerSection(request: request, paper: paper))
 
         Mark every question you can see in the answer. "outOf" is the marks available for that \
         question, taken from the guidelines when they state it. The outOf values must sum to \
@@ -271,6 +320,33 @@ enum MarkingPrompts {
         the total across the questions you found. Keep each reason to one sentence. When there are \
         no guidelines, put the correct answer in the reason so I can check your marking.
         """
+    }
+
+    /// How the answer is presented. A handwritten paper is the attached photographs: the
+    /// transcript beside them is machine OCR of an image, which for handwriting is usually
+    /// partial or garbled, so the model is told to read the pages themselves.
+    static func answerSection(request: MarkingRequest, paper: String) -> String {
+        guard !request.answerImages.isEmpty else { return paper }
+        let count = request.answerImages.count
+        var section = """
+        The work is attached as \(count) image\(count == 1 ? "" : "s") of the student's own pages, \
+        photographed or scanned. Read the handwriting directly from those images and mark what is \
+        written on them. Marks for working, method and diagrams are all visible in the pages.
+        """
+        if paper.isEmpty {
+            section += "\nNo transcript was possible — this is handwritten work, so the pages are the only source."
+        } else {
+            section += """
+
+            A machine transcript of the pages follows. It was produced by text recognition, which \
+            often misses or garbles handwriting, so use it only as a hint and trust the images when \
+            the two disagree. If a question appears in the transcript but not in the images, ignore it.
+
+            TRANSCRIPT (may be incomplete or wrong)
+            \(paper)
+            """
+        }
+        return section
     }
 
     static func clipped(_ text: String, limit: Int) -> String {
@@ -288,6 +364,7 @@ enum MarkingPrompts {
 enum OpenRouterClient {
     static let completionsURL = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
     static let modelsURL = URL(string: "https://openrouter.ai/api/v1/models")!
+    static let keyURL = URL(string: "https://openrouter.ai/api/v1/key")!
 
     /// Builds the exact JSON body sent to OpenRouter: the same instructions and prompt the
     /// on-device model gets, the JSON response format, and any scans as base64 data URLs.
@@ -365,6 +442,55 @@ enum OpenRouterClient {
         }
         let result = try MarkingService.parse(reply.content)
         return MarkingOutcome(result: result, backend: .openRouter, detail: reply.detail)
+    }
+
+    /// Reads the key's own limits: validity, credit left and whether it is a free-tier key.
+    /// A rejected key fails here with a 401 before any marking is attempted.
+    static func keyInfo(key: String) async throws -> OpenRouterKeyInfo {
+        var request = URLRequest(url: keyURL)
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            throw OpenRouterError.badStatus(status, serverMessage(from: data))
+        }
+        guard let envelope = try? JSONDecoder().decode(KeyEnvelope.self, from: data),
+              let payload = envelope.data else {
+            throw MarkingError.failed("OpenRouter's key response could not be read.")
+        }
+        return OpenRouterKeyInfo(
+            label: payload.label,
+            limitRemaining: payload.limitRemaining,
+            usage: payload.usage,
+            isFreeTier: payload.isFreeTier ?? false,
+            freeModelRequestsRemaining: payload.freeRequests?.remaining
+        )
+    }
+
+    private struct KeyEnvelope: Decodable {
+        struct Payload: Decodable {
+            struct FreeRequests: Decodable {
+                let remaining: Int?
+                let limit: Int?
+            }
+
+            let label: String?
+            let limitRemaining: Double?
+            let usage: Double?
+            let isFreeTier: Bool?
+            let freeRequests: FreeRequests?
+
+            enum CodingKeys: String, CodingKey {
+                case label, usage
+                case limitRemaining = "limit_remaining"
+                case isFreeTier = "is_free_tier"
+                case freeRequests = "free_model_daily_requests"
+            }
+        }
+
+        let data: Payload?
     }
 
     /// Marks a single trivial question to prove a key and model work. A full past paper is a

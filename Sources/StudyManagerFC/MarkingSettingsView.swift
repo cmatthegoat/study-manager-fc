@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Where the marker is chosen. The API key is typed here, saved to the Keychain and never
@@ -15,6 +16,7 @@ struct MarkingSettingsCard: View {
     @State private var models: [OpenRouterModel] = []
     @State private var isLoadingModels = false
     @State private var isTesting = false
+    @State private var report: MarkingDiagnosticReport?
     @State private var message: String?
     @State private var messageIsError = false
 
@@ -64,6 +66,9 @@ struct MarkingSettingsCard: View {
                 preferenceRow
                 keyRow
                 modelRow
+                if let report {
+                    reportCard(report)
+                }
                 privacyNote
                 if let message {
                     Label(message, systemImage: messageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
@@ -186,8 +191,8 @@ struct MarkingSettingsCard: View {
                 .bentoTint(.white)
                 .font(.system(size: 10, weight: .semibold))
                 .disabled(isLoadingModels)
-                Button(isTesting ? "Testing…" : "Test Key") {
-                    Task { await testKey() }
+                Button(isTesting ? "Testing…" : "Test Connection") {
+                    Task { await runTests() }
                 }
                 .buttonStyle(.bentoBordered)
                 .bentoTint(.secondary)
@@ -198,7 +203,7 @@ struct MarkingSettingsCard: View {
             TextField("…or paste a model slug, e.g. google/gemini-2.5-flash", text: $model)
                 .bentoField()
                 .onSubmit { MarkingPreferences.model = model }
-            Text("Only models that accept images are listed, because a handwritten paper has to be sent as a scan. The list is fetched from OpenRouter, so it follows whatever they host today. Test Key marks one trivial question so a broken key or model is caught before a real paper.")
+            Text("Only models that accept images are listed, because a handwritten paper has to be sent as a scan. The list is fetched from OpenRouter, so it follows whatever they host today. Test Connection checks the key, the credit, the model and a real one-mark paper before you trust it with your work.")
                 .font(.system(size: 9))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -258,11 +263,74 @@ struct MarkingSettingsCard: View {
         }
     }
 
+    // MARK: - Report
+
+    /// The checklist the diagnostic returns, rendered as one row per question the app cares
+    /// about. The verdict banner uses the worst row, so a single failure is not lost among
+    /// passes.
+    private func reportCard(_ report: MarkingDiagnosticReport) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Pill(
+                    text: report.verdict.title.uppercased(),
+                    color: report.verdict.tint,
+                    icon: report.verdict.symbol
+                )
+                Text(report.headline)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button("Copy Report") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(report.json(), forType: .string)
+                    messageIsError = false
+                    message = "Report copied as JSON."
+                }
+                .buttonStyle(.bentoBordered)
+                .bentoTint(.white)
+                .font(.system(size: 9, weight: .semibold))
+            }
+
+            VStack(spacing: 0) {
+                ForEach(report.checks) { check in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: check.status.symbol)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(check.status.tint)
+                            .frame(width: 14)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(check.title)
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            Text(check.detail)
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 6)
+                    if check.id != report.checks.last?.id { Divider() }
+                }
+            }
+
+            Text(String(format: "%@ · %.1fs · \(report.passedCount) of \(report.checks.count) checks passed", report.model, report.seconds))
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(report.verdict.tint.opacity(0.35), lineWidth: 1)
+        )
+    }
+
     // MARK: - Key
 
-    /// Sends one one-mark question through the real client, which is the only honest way to
-    /// know the key, the model slug and the parsing all line up.
-    private func testKey() async {
+    /// Runs the full health check. Every request it makes is one trivial question, so the
+    /// whole test costs a fraction of a cent.
+    private func runTests() async {
         guard let key = MarkingKeychain.read(), !key.isEmpty else {
             messageIsError = true
             message = "Save a key before testing it."
@@ -270,23 +338,15 @@ struct MarkingSettingsCard: View {
         }
         isTesting = true
         message = nil
-        do {
-            let verdict = try await OpenRouterClient.test(key: key, model: model)
-            await MainActor.run {
-                isTesting = false
-                messageIsError = false
-                message = verdict
-            }
-        } catch {
-            await MainActor.run {
-                isTesting = false
-                messageIsError = true
-                message = error.localizedDescription
-            }
+        let result = await MarkingDiagnostics.run(key: key, modelSlug: model)
+        await MainActor.run {
+            isTesting = false
+            report = result
         }
     }
 
     private func saveKey() {
+        report = nil
         guard MarkingKeychain.save(apiKey) else {
             hasKey = MarkingKeychain.hasKey
             messageIsError = true
@@ -304,6 +364,7 @@ struct MarkingSettingsCard: View {
         MarkingKeychain.delete()
         apiKey = ""
         hasKey = false
+        report = nil
         messageIsError = false
         message = "Key removed. Papers will be marked on this Mac only."
         if preference == .openRouter {

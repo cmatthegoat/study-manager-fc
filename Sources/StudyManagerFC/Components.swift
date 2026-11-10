@@ -654,7 +654,7 @@ struct ClubSelectionCard: View {
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    Text("\(club.country) · Pot \(ClubDatabase.potNumber(for: club.id))")
+                    Text("\(club.country) · Pot \(ClubDatabase.potNumber(for: club.id)) · Academy Lv \(ClubDatabase.academyLevel(for: club.id))")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                 }
