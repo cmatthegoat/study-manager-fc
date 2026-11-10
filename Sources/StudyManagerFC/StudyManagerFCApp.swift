@@ -6,18 +6,6 @@ struct StudyManagerFCApp: App {
     @State private var store = AppStore()
 
     init() {
-        // A diagnostic for the marking pipeline: availability, an optional file to OCR, and a
-        // small paper marked with the real on-device model.
-        if let flag = CommandLine.arguments.firstIndex(of: "--verify-marking") {
-            let path = CommandLine.arguments.count > flag + 1 ? CommandLine.arguments[flag + 1] : nil
-            Self.runMarkingCheck(path: path)
-        }
-        // A wiring check for the cloud marker: fetches OpenRouter's catalogue without a key,
-        // which proves the endpoint, the decoding and the image filter all work. It never
-        // sends a paper, so it costs nothing.
-        if CommandLine.arguments.contains("--verify-openrouter") {
-            Self.runOpenRouterCheck()
-        }
         // A packaging check: the game database lives beside the app, and this proves the
         // shipped bundle can find and decode it without opening a window.
         if CommandLine.arguments.contains("--verify-database") {
@@ -52,107 +40,6 @@ struct StudyManagerFCApp: App {
     }
 }
 
-extension StudyManagerFCApp {
-    /// Lists the image-capable models OpenRouter is hosting right now, then exits. The key
-    /// itself is never printed — only whether one is stored.
-    fileprivate static func runOpenRouterCheck() {
-        var finished = false
-        Task {
-            do {
-                let models = try await OpenRouterClient.models()
-                print("openrouter image models: \(models.count)")
-                for model in models.prefix(6) {
-                    print("  \(model.id) — \(model.displayName)")
-                }
-            } catch {
-                print("openrouter models failed: \(error.localizedDescription)")
-            }
-            print("key stored: \(MarkingKeychain.hasKey)  preference: \(MarkingPreferences.preference.rawValue)  model: \(MarkingPreferences.model.isEmpty ? "(none)" : MarkingPreferences.model)")
-            print("marking ready: \(MarkingService.isReady)")
-
-            // With a key and model stored, mark one trivial question so the whole cloud path
-            // — auth, status handling, reply decoding, JSON parsing — is proven end to end.
-            // The key itself is never printed. This costs a fraction of a cent.
-            if let key = MarkingKeychain.read(), !key.isEmpty, !MarkingPreferences.model.isEmpty {
-                do {
-                    let verdict = try await OpenRouterClient.test(key: key, model: MarkingPreferences.model)
-                    print("key test: \(verdict)")
-                } catch {
-                    print("key test failed: \(error.localizedDescription)")
-                }
-            } else {
-                print("key test skipped: no key or model stored, so nothing was sent.")
-            }
-            finished = true
-        }
-        while !finished {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-        }
-        exit(0)
-    }
-
-    /// Runs the marking diagnostic and exits. Waiting on the model needs the main run loop
-    /// alive, so this pumps it rather than blocking on a semaphore.
-    fileprivate static func runMarkingCheck(path: String?) {
-        print("marking availability: \(MarkingService.availability)")
-        if let path {
-            do {
-                let text = try PaperText.text(from: URL(fileURLWithPath: path))
-                let preview = text.prefix(160).replacingOccurrences(of: "\n", with: " ")
-                print("ocr chars: \(text.count)")
-                print("ocr preview: \(preview)")
-            } catch {
-                print("ocr failed: \(error.localizedDescription)")
-            }
-        }
-        guard MarkingService.availability.isAvailable else { exit(3) }
-
-        let answer = "Q1: 2x = 10, so x = 5. Q2: the derivative of x^2 + 7x at x = 1 is 2x + 7, so the gradient is 9."
-        let request = MarkingRequest(
-            subject: .ext1Maths,
-            title: "Diagnostic paper",
-            totalMarks: 10,
-            answerText: answer,
-            guidelinesText: "Q1 (5 marks): correct value of x with working. Q2 (5 marks): correct gradient of 9.",
-            comments: ""
-        )
-        // The same work with no rubric at all, to prove guidelines are optional end to end.
-        let unguided = MarkingRequest(
-            subject: .ext1Maths,
-            title: "Diagnostic paper (no rubric)",
-            totalMarks: 10,
-            answerText: answer,
-            guidelinesText: "",
-            comments: ""
-        )
-        var finished = false
-        Task {
-            do {
-                let result = try await MarkingService.mark(request)
-                print("marked with rubric: \(result.totalAwarded)/\(result.totalOutOf) across \(result.questions.count) questions")
-                for question in result.questions {
-                    print("  \(question.question): \(question.awarded)/\(question.outOf) — \(question.reason)")
-                }
-                print("feedback: \(result.feedback)")
-
-                let unrubricked = try await MarkingService.mark(unguided)
-                print("marked WITHOUT rubric: \(unrubricked.totalAwarded)/\(unrubricked.totalOutOf) across \(unrubricked.questions.count) questions")
-                for question in unrubricked.questions {
-                    print("  \(question.question): \(question.awarded)/\(question.outOf) — \(question.reason)")
-                }
-                print("feedback: \(unrubricked.feedback)")
-            } catch {
-                print("mark failed: \(error.localizedDescription)")
-            }
-            finished = true
-        }
-        while !finished {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-        }
-        exit(0)
-    }
-}
-
 struct RootView: View {
     @Environment(AppStore.self) private var store
     /// Held above the board so that a palette change — which rebuilds the board — does not
@@ -179,7 +66,6 @@ enum MainSection: String, CaseIterable, Identifiable {
     case europe
     case exams
     case journal
-    case marking
 
     var id: String { rawValue }
 
@@ -195,7 +81,6 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .europe: "Champions League"
         case .exams: "Exams"
         case .journal: "Journal"
-        case .marking: "AI Marking"
         }
     }
 
@@ -211,7 +96,6 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .europe: "trophy"
         case .exams: "doc.text.magnifyingglass"
         case .journal: "shield.lefthalf.filled"
-        case .marking: "wand.and.stars"
         }
     }
 }
@@ -512,8 +396,6 @@ struct MainTabView: View {
             ExamsView()
         case .journal:
             BulletproofJournalView()
-        case .marking:
-            MarkingView()
         }
     }
 }

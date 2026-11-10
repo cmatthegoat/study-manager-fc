@@ -974,7 +974,7 @@ enum MistakeSource: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .manual: "Logged by hand"
-        case .aiMarked: "Flagged by AI marking"
+        case .aiMarked: "From a marked paper"
         }
     }
 

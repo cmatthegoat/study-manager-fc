@@ -506,99 +506,6 @@ final class AppStore {
                 exit(1)
             }
 
-            // Handwritten uploads: a photo or an image-only PDF exported from an iPad has no
-            // text layer, so the page itself has to travel as an image. Vision finds nothing
-            // on a drawn page, and that must not be treated as an unreadable file.
-            let handwritingPNG = tempDir.appendingPathComponent("handwriting.png")
-            let handwritingPDF = tempDir.appendingPathComponent("handwriting.pdf")
-            let page = NSImage(size: NSSize(width: 900, height: 1_300))
-            page.lockFocus()
-            NSColor.white.setFill()
-            NSRect(x: 0, y: 0, width: 900, height: 1_300).fill()
-            NSColor.black.setStroke()
-            let ink = NSBezierPath()
-            ink.move(to: NSPoint(x: 80, y: 1_100))
-            ink.curve(to: NSPoint(x: 700, y: 1_150), controlPoint1: NSPoint(x: 200, y: 1_000), controlPoint2: NSPoint(x: 400, y: 1_250))
-            ink.lineWidth = 4
-            ink.stroke()
-            page.unlockFocus()
-            if let tiff = page.tiffRepresentation,
-               let rep = NSBitmapImageRep(data: tiff),
-               let png = rep.representation(using: .png, properties: [:]) {
-                try? png.write(to: handwritingPNG)
-            }
-            let pdf = PDFDocument()
-            if let pdfPage = PDFPage(image: page) {
-                pdf.insert(pdfPage, at: 0)
-            }
-            pdf.write(to: handwritingPDF)
-
-            let pngScan = try? PaperText.scan(handwritingPNG)
-            let pdfScan = try? PaperText.scan(handwritingPDF)
-            guard let pngScan, pngScan.images.count == 1, pngScan.images[0].mimeType == "image/jpeg",
-                  let pdfScan, pdfScan.images.count == 1, pdfScan.text.isEmpty else {
-                print("SELF TEST FAIL: a handwritten page was not turned into an image for the marker")
-                exit(1)
-            }
-            let handwrittenRequest = MarkingRequest(
-                subject: .ext1Maths,
-                title: "Handwritten",
-                totalMarks: 10,
-                answerText: pdfScan.text,
-                guidelinesText: "",
-                comments: "",
-                answerImages: pdfScan.images
-            )
-            let handwrittenPrompt = MarkingPrompts.userPrompt(
-                handwrittenRequest,
-                guidelines: "",
-                comments: "",
-                paper: pdfScan.text
-            )
-            guard handwrittenPrompt.contains("Read the handwriting directly"),
-                  MarkingPrompts.userPrompt(
-                      MarkingRequest(subject: .ext1Maths, title: "Typed", totalMarks: 10, answerText: "x = 5", guidelinesText: "", comments: ""),
-                      guidelines: "",
-                      comments: "",
-                      paper: "x = 5"
-                  ).contains("Read the handwriting directly") == false else {
-                print("SELF TEST FAIL: the marking prompt does not tell the model to read a scanned page")
-                exit(1)
-            }
-
-            // OpenRouter wiring: the request the cloud marker would send carries the chosen
-            // model, the shared prompt, the JSON-only response format and any scan as a
-            // base64 data URL — and never the key.
-            let cloudRequest = MarkingRequest(
-                subject: .chemistry,
-                title: "Cloud paper",
-                totalMarks: 12,
-                answerText: "Q1: n = m/M = 4.0/16 = 0.25 mol",
-                guidelinesText: "",
-                comments: "",
-                answerImages: [MarkingImage(data: Data([0xFF, 0xD8, 0xFF]), mimeType: "image/jpeg")]
-            )
-            guard let body = try? OpenRouterClient.requestBody(cloudRequest, model: "vendor/model"),
-                  body["model"] as? String == "vendor/model",
-                  (body["response_format"] as? [String: Any])?["type"] as? String == "json_object",
-                  let messages = body["messages"] as? [[String: Any]],
-                  messages.count == 2,
-                  let parts = messages[1]["content"] as? [[String: Any]],
-                  parts.contains(where: {
-                      ($0["image_url"] as? [String: Any])?["url"] as? String == "data:image/jpeg;base64,/9j/"
-                  }),
-                  let encoded = try? JSONSerialization.data(withJSONObject: body),
-                  !String(decoding: encoded, as: UTF8.self).contains("sk-or-") else {
-                print("SELF TEST FAIL: the OpenRouter request body was not built as expected")
-                exit(1)
-            }
-            guard OpenRouterError.message(forStatus: 402, server: "").contains("out of credit"),
-                  OpenRouterError.message(forStatus: 401, server: "").contains("rejected"),
-                  OpenRouterError.message(forStatus: 404, server: "").contains("model") else {
-                print("SELF TEST FAIL: OpenRouter failures do not explain themselves")
-                exit(1)
-            }
-
             // Inline directives: `p2 #Ext 1 Maths - Vectors: do 3.2`
             let parsed = TodoInput.parse("p2 #Ext 1 Maths - Vectors: do 3.2", subtopics: [topic])
             guard parsed.subject == .ext1Maths, parsed.subtopicName == "Vectors", parsed.priority == 2, parsed.title == "do 3.2" else {
@@ -693,21 +600,6 @@ final class AppStore {
                   market.state.clubCash == cashBeforeSale + offer.ceiling,
                   market.state.transferOffers.isEmpty else {
                 print("SELF TEST FAIL: accepting an offer did not sell the player for the agreed fee")
-                exit(1)
-            }
-
-            // The marking parser must survive a model that wraps its JSON in a code fence or
-            // a sentence, clamp a mark above the available total, and reject prose.
-            let fencedReply = "Here are the marks:\n```json\n{\"questions\":[{\"question\":\"Q1\",\"awarded\":5,\"outOf\":5,\"reason\":\"ok\"},{\"question\":\"Q2\",\"awarded\":9,\"outOf\":7,\"reason\":\"over\"}],\"feedback\":\"fine\"}\n```"
-            guard let parsedMarks = try? MarkingService.parse(fencedReply),
-                  parsedMarks.totalOutOf == 12,
-                  parsedMarks.totalAwarded == 12,
-                  parsedMarks.questions.count == 2 else {
-                print("SELF TEST FAIL: the marking parser mishandled fenced JSON or clamping")
-                exit(1)
-            }
-            guard (try? MarkingService.parse("I think it deserves a pass.")) == nil else {
-                print("SELF TEST FAIL: the marking parser accepted prose as marks")
                 exit(1)
             }
 
@@ -1346,7 +1238,7 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, handwritten pages turned into page images, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, seven club-relative styles plus every team's own palette, three layouts, hand-drawn formations, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review")
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, seven club-relative styles plus every team's own palette, three layouts, hand-drawn formations, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {

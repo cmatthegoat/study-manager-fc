@@ -413,7 +413,7 @@ struct BulletproofJournalView: View {
                     symbol: "shield.checkerboard",
                     title: all.isEmpty ? "No mistakes logged" : "Nothing matches",
                     message: all.isEmpty
-                        ? "Mark a paper with AI Marking and every dropped mark can be sent straight here, or write an entry up yourself."
+                        ? "Write up what went wrong and the rule that fixes it, so the same error does not cost you twice."
                         : "Widen the subject or status filter, or clear the search."
                 )
             } else {
