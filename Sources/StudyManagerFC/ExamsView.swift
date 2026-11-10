@@ -69,6 +69,7 @@ struct ExamsView: View {
                     title: "Tests & Exams",
                     subtitle: "Log assessments. Only your class rank earns cash and XP."
                 )
+                GradeProjectionCard(assessments: store.state.assessments)
                 addCard
                 marksGraphCard
                 workMarksCard

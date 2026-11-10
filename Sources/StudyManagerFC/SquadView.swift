@@ -43,6 +43,7 @@ struct SquadView: View {
             VStack(spacing: 22) {
                 header
                 metricsRow
+                ContractsCard()
                 Picker("Squad view", selection: $tab) {
                     Text("Starting XI").tag(0)
                     Text("All Players").tag(1)

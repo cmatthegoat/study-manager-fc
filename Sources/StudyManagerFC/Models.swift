@@ -117,6 +117,10 @@ enum GameRules {
     /// Club Cash needed to move the academy from `level` to `level + 1`: a flat 95,000 for
     /// every rung, so climbing from level 1 to level 5 costs 380,000 in all.
     static let academyUpgradeCostPerLevel = 95_000
+    /// How long a contract runs, in seasons.
+    static let contractLengthSeasons = 4
+    /// Weeks of wages paid as a signing-on fee when a contract is renewed.
+    static let renewalWeeksPaid = 12
 
     static func academyUpgradeCost(from level: Int) -> Int? {
         guard level >= 1, level < maxAcademyLevel else { return nil }
@@ -342,6 +346,19 @@ struct Player: Identifiable, Codable, Hashable {
     var isUserListing: Bool = false
     /// Asking price in Club Cash when listed (nil = AI will make automatic offers)
     var listingPrice: Int? = nil
+    /// The last season covered by this contract. Nil reads as a four-season deal from the
+    /// season the player joined, so careers saved before contracts existed still work.
+    var contractSeason: Int? = nil
+    /// Weekly wage in Club Cash. Nil derives one from the rating.
+    var weeklyWage: Int? = nil
+
+    /// The wage a rating commands, and the curve every new deal uses.
+    static func defaultWage(for overall: Int) -> Int { max(150, overall * 5) }
+
+    var wage: Int { weeklyWage ?? Player.defaultWage(for: overall) }
+
+    /// The season this contract runs out at the end of.
+    func contractEndSeason() -> Int { contractSeason ?? joinedSeason + GameRules.contractLengthSeasons }
     enum CodingKeys: String, CodingKey {
         case id
         case name
@@ -360,6 +377,8 @@ struct Player: Identifiable, Codable, Hashable {
         case listingPrice
         case isInjured
         case matchesMissed
+        case contractSeason
+        case weeklyWage
     }
     /// True if the player is currently injured and cannot play.
     var isInjured: Bool = false
@@ -969,6 +988,47 @@ enum MistakeSource: String, Codable, CaseIterable, Identifiable {
 
 /// One mistake worth never repeating: what went wrong, what to do instead, and optional
 /// evidence (a scan of the working) kept beside the career file rather than inside it.
+/// Why a mark was lost. The topic says where it happened; the cause says what to fix, which
+/// is the difference between a list of regrets and a diagnosis.
+enum MistakeCause: String, Codable, CaseIterable, Identifiable {
+    case unclassified
+    case methodGap
+    case signError
+    case arithmetic
+    case misreadQuestion
+    case ranOutOfTime
+    case units
+    case carelessTranscription
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .unclassified: "No cause yet"
+        case .methodGap: "Didn't know the method"
+        case .signError: "Sign error"
+        case .arithmetic: "Arithmetic slip"
+        case .misreadQuestion: "Misread the question"
+        case .ranOutOfTime: "Ran out of time"
+        case .units: "Units"
+        case .carelessTranscription: "Careless copying"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .unclassified: "questionmark.circle"
+        case .methodGap: "book.closed"
+        case .signError: "plus.forwardslash.minus"
+        case .arithmetic: "function"
+        case .misreadQuestion: "text.magnifyingglass"
+        case .ranOutOfTime: "clock.badge.exclamationmark"
+        case .units: "ruler"
+        case .carelessTranscription: "doc.on.doc"
+        }
+    }
+}
+
 struct MistakeEntry: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var date: Date = Date()
@@ -1000,6 +1060,8 @@ struct MistakeEntry: Identifiable, Codable, Hashable {
     var reviewStage: Int? = nil
     /// When this entry next deserves a retest. Nil falls back to a day after it was written.
     var nextReviewAt: Date? = nil
+    /// What kind of error this was, so the journal can report patterns rather than topics.
+    var cause: MistakeCause? = nil
 
     /// The rungs of the ladder, in days: tomorrow, three days, a week, a month.
     static let reviewIntervals: [Double] = [1, 3, 7, 30]
@@ -1917,6 +1979,8 @@ extension Player {
         listingPrice = try container.decodeIfPresent(Int.self, forKey: .listingPrice)
         isInjured = try container.decodeIfPresent(Bool.self, forKey: .isInjured) ?? false
         matchesMissed = try container.decodeIfPresent(Int.self, forKey: .matchesMissed) ?? 0
+        contractSeason = try container.decodeIfPresent(Int.self, forKey: .contractSeason)
+        weeklyWage = try container.decodeIfPresent(Int.self, forKey: .weeklyWage)
     }
 }
 

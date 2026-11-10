@@ -220,6 +220,7 @@ struct MainTabView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.openWindow) private var openWindow
     @Binding var selection: MainSection
+    @State private var showingPalette = false
     @State private var showingResetConfirmation = false
     @State private var showingChangeTeam = false
     @State private var resetConfirmationsLeft = MainTabView.requiredResetConfirmations
@@ -229,6 +230,11 @@ struct MainTabView: View {
         layoutBody
             .padding(12)
             .background(AppBackground(paletteKey: store.paletteKey))
+            .background { shortcutButtons }
+            .sheet(isPresented: $showingPalette) {
+                CommandPaletteView(commands: paletteCommands) { showingPalette = false }
+                    .environment(store)
+            }
         .sheet(isPresented: $showingChangeTeam) {
             ChangeTeamSheet()
                 .environment(store)
@@ -264,6 +270,60 @@ struct MainTabView: View {
         } message: {
             Text("This permanently deletes your club, squad, trophies, Club Cash and study history, then returns you to club selection. Confirm \(resetConfirmationsLeft) more time\(resetConfirmationsLeft == 1 ? "" : "s") to continue.")
         }
+    }
+
+    /// ⌘K and ⌘1–⌘9. Invisible buttons are the cheapest way to give the whole board keyboard
+    /// shortcuts without a menu bar entry for every section.
+    private var shortcutButtons: some View {
+        Group {
+            Button("") { showingPalette = true }
+                .keyboardShortcut("k", modifiers: .command)
+            ForEach(Array(MainSection.allCases.prefix(9).enumerated()), id: \.offset) { index, section in
+                Button("") { selection = section }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+            }
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    private var paletteCommands: [PaletteCommand] {
+        var commands = MainSection.allCases.map { section in
+            PaletteCommand(
+                id: "section-\(section.rawValue)",
+                title: "Go to \(section.title)",
+                subtitle: "Section",
+                symbol: section.systemImage
+            ) {
+                selection = section
+            }
+        }
+        commands.append(
+            PaletteCommand(
+                id: "timer",
+                title: store.isTimerRunning ? "Finish focus session" : "Start focus timer",
+                subtitle: "Timer",
+                symbol: "timer"
+            ) {
+                if store.isTimerRunning {
+                    store.pauseTimer()
+                } else {
+                    store.startTimer()
+                }
+            }
+        )
+        commands.append(
+            PaletteCommand(
+                id: "appearance",
+                title: "Open Appearance",
+                subtitle: "Palette and layout",
+                symbol: "paintpalette"
+            ) {
+                openWindow(id: appearanceWindowID)
+            }
+        )
+        return commands
     }
 
     /// The chosen arrangement. The rail layouts keep the page actions top-right; the top bar

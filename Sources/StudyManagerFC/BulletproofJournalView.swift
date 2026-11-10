@@ -99,6 +99,49 @@ struct BulletproofJournalView: View {
         all.filter { !$0.isResolved && $0.reviewCount == 0 }
     }
 
+    /// Open mistakes counted by cause, biggest first. This is the "how do I lose marks"
+    /// question, which no topic chart can answer.
+    private var causeRows: [(cause: MistakeCause, count: Int)] {
+        Dictionary(grouping: all.filter { !$0.isResolved }, by: { $0.cause ?? .unclassified })
+            .map { (cause: $0.key, count: $0.value.count) }
+            .filter { $0.cause != .unclassified }
+            .sorted { $0.count > $1.count }
+    }
+
+    private var causesCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                title: "How marks are lost",
+                subtitle: "Tag each entry with a cause to see the pattern behind the topics",
+                symbol: "stethoscope"
+            )
+            ForEach(causeRows.prefix(4), id: \.cause) { row in
+                HStack(spacing: 8) {
+                    Image(systemName: row.cause.symbol)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Neon.accent)
+                        .frame(width: 16)
+                    Text(row.cause.title)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    Spacer(minLength: 8)
+                    Text("\(row.count) open")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 3)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Neon.panel.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Neon.border, lineWidth: 1)
+        )
+    }
+
     /// The spaced-review queue: entries whose 1/3/7/30-day retest has come round. Two
     /// answers, and the entry climbs the ladder or drops back to the bottom.
     private var reviewCard: some View {
@@ -163,6 +206,7 @@ struct BulletproofJournalView: View {
 
                 summaryCard
                 if !store.dueMistakeReviews.isEmpty { reviewCard }
+                if !causeRows.isEmpty { causesCard }
                 if !repeats.isEmpty { repeatsCard }
 
                 if isAdding {
@@ -589,6 +633,14 @@ private struct MistakeEditorCard: View {
                     options: [BentoOption("Whole subject", value: UUID?.none)]
                         + topics.map { BentoOption($0.name, value: UUID?.some($0.id)) },
                     width: 210
+                )
+                BentoMenu(
+                    selection: Binding(
+                        get: { draft.cause ?? .unclassified },
+                        set: { draft.cause = $0 == .unclassified ? nil : $0 }
+                    ),
+                    options: MistakeCause.allCases.map { BentoOption($0.title, value: $0, symbol: $0.symbol) },
+                    width: 170
                 )
                 TextField("Question, e.g. Q4 or Trial 2024 Q2b", text: $draft.questionRef)
                     .bentoField()

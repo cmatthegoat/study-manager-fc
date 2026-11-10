@@ -51,7 +51,27 @@ Dashboard shows the three mistakes that most need revising. Each open entry is a
 scheduled: a new mistake comes back after a day, then three days, a week and a month. The
 tab opens with a **Due for review** card, and answering *Got it* moves the entry up the
 ladder while *Again* drops it back to tomorrow. The journal pays no cash or XP, so it
-cannot be farmed.
+cannot be farmed. Each entry can also be tagged with a cause — sign error, arithmetic
+slip, misread question, ran out of time — and the tab reports which causes are costing the
+most marks, which is a different question from which topics are.
+
+**Viewing the term.** The Exams tab projects each subject's final mark from the assessments
+already sat, weighted by their weightings, and shows what the remaining weight has to
+average to reach Band 4, 5 or 6. The Dashboard builds the week's plan from the same data —
+approaching tests, mistakes waiting for a retest, and the topics with the weakest marked
+averages — and every line starts a timed session on exactly that topic. A weekly report
+exports the last seven days as Markdown, and ⌘K opens a command palette (⌘1–⌘9 jump
+between sections).
+
+**Contracts.** Every player has a contract running four seasons from the season they
+joined, and a wage derived from their rating. Deals are not renewed automatically: expiry
+at the end of a season sends the player to the free-agent pool, and the Squad tab lists
+everyone expiring this season or next with the renewal cost (twelve weeks of wages), so a
+squad that is never renewed does not quietly empty itself.
+
+**Apple Calendar.** The Calendar tab can read your own calendars, with your permission,
+and lay events over the month beside your study tasks. It is read-only: nothing in the app
+ever writes to a calendar or a reminder list.
 
 **Cloud marking fallback.** Marking runs on Apple's on-device model by default.
 If that model is unavailable, or a paper outgrows its context window, OpenRouter

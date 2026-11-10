@@ -1278,6 +1278,30 @@ final class AppStore {
                 exit(1)
             }
 
+            // Grade projection, the week's plan and the weekly report all come from data the
+            // app already holds, and a contract has to have a sensible default length.
+            let projectionSource = [
+                Assessment(date: Date(), subject: .ext2Maths, title: "Task 1", marksObtained: 8, marksTotal: 10, weighting: 40)
+            ]
+            guard let projection = GradeProjection.all(from: projectionSource).first,
+                  Int(projection.average.rounded()) == 80,
+                  projection.remainingWeighting == 60,
+                  abs((projection.needed(for: 70) ?? 0) - 63.3333) < 0.05 else {
+                print("SELF TEST FAIL: grade projection maths is wrong")
+                exit(1)
+            }
+            var planState = raiser.state
+            planState.assessments.append(
+                Assessment(date: Date().addingTimeInterval(3 * 86_400), subject: .ext1Maths, title: "Trial", marksObtained: 0, marksTotal: 0, weighting: 30)
+            )
+            guard !StudyPlan.week(for: planState, sessions: planState.recentSessions).isEmpty,
+                  !WeeklyReport.markdown(state: planState).isEmpty,
+                  raiser.contractEnd(for: raiser.state.players[0]) >= raiser.state.seasonNumber,
+                  raiser.weeklyWageBill > 0 else {
+                print("SELF TEST FAIL: the plan, the weekly report or the contract defaults are wrong")
+                exit(1)
+            }
+
             // Later checks price players of their own; the test career is the only one alive.
             PlayerPricing.manualRise = 0
 
@@ -2485,6 +2509,54 @@ final class AppStore {
         commit(draft)
     }
 
+    // MARK: - Contracts
+
+    /// The squad's weekly wage bill, shown beside the academy in the club's finances.
+    var weeklyWageBill: Int { state.players.reduce(0) { $0 + $1.wage } }
+
+    func contractEnd(for player: Player) -> Int { player.contractEndSeason() }
+
+    /// Players whose deal runs out this season or next, soonest first.
+    var expiringContracts: [Player] {
+        state.players
+            .filter { contractEnd(for: $0) <= state.seasonNumber + 1 }
+            .sorted { contractEnd(for: $0) < contractEnd(for: $1) }
+    }
+
+    /// Twelve weeks of wages is the signing-on fee for a renewal.
+    func renewalCost(for player: Player) -> Int { player.wage * GameRules.renewalWeeksPaid }
+
+    @discardableResult
+    func renewContract(_ id: UUID, seasons: Int = 3) -> Bool {
+        guard let index = state.players.firstIndex(where: { $0.id == id }) else { return false }
+        let cost = renewalCost(for: state.players[index])
+        guard state.clubCash >= cost else { return false }
+        var draft = state
+        draft.clubCash -= cost
+        draft.players[index].contractSeason = draft.seasonNumber + seasons
+        commit(draft)
+        return true
+    }
+
+    /// Anyone whose deal ended with the season that just finished leaves on a free transfer,
+    /// so a squad that is never renewed slowly empties.
+    static func expireContracts(in draft: inout GameState) {
+        let finished = draft.seasonNumber - 1
+        let expired = draft.players.filter { $0.contractEndSeason() <= finished }
+        guard !expired.isEmpty else { return }
+        let ids = Set(expired.map(\.id))
+        draft.players.removeAll { ids.contains($0.id) }
+        draft.lineup = draft.lineup.filter { !ids.contains($0.value) }
+        draft.bench.removeAll { ids.contains($0) }
+        draft.transferOffers.removeAll { ids.contains($0.playerID) }
+        draft.freeAgents.append(contentsOf: expired.map { player in
+            var free = player
+            free.clubID = nil
+            free.contractSeason = nil
+            return free
+        })
+    }
+
     // MARK: - Spaced review
 
     /// The rungs of the review ladder, in days: tomorrow, three days, a week, a month.
@@ -3081,6 +3153,7 @@ final class AppStore {
             !draft.players.contains { $0.id == offer.playerID }
         }
         draft.seasonNumber += 1
+        Self.expireContracts(in: &draft)
         // A season of neglect costs the academy a level: the intake shrinks and the boys get
         // weaker unless the manager keeps investing in it.
         draft.academyLevel = GameRules.decayedAcademyLevel(draft.academyLevel)

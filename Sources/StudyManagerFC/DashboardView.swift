@@ -22,8 +22,10 @@ struct DashboardView: View {
                         FocusTimerCard()
                         QuickLogCard()
                         QuickTodoCard()
+                        StudyPlanCard()
                         WeekAheadCard(onOpenCalendar: onOpenCalendar)
                         JournalNudgeCard()
+                        WeeklyReportCard()
                     }
                     .frame(maxWidth: .infinity)
 

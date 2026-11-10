@@ -59,6 +59,10 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.sports-games</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Study Manager FC reads your calendars so your events sit beside your study tasks. It never changes them.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Study Manager FC reads your calendars so your events sit beside your study tasks. It never changes them.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>

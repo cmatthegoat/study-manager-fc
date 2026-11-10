@@ -8,6 +8,9 @@ struct CalendarView: View {
 
     @State private var visibleMonth = Calendar.current.startOfDay(for: Date())
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
+    /// The user's own calendars, read-only. Nothing in this app ever writes to them.
+    @State private var appleCalendar = AppleCalendar()
+    @State private var showAppleEvents = false
 
     private let calendar = Calendar.current
 
@@ -89,6 +92,7 @@ struct CalendarView: View {
                 )
 
                 overview
+                appleCalendarCard
                 monthCard
                 selectedDayCard
                 undatedCard
@@ -244,6 +248,19 @@ struct CalendarView: View {
                             .font(.system(size: 8, weight: .semibold, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
+                    if showAppleEvents {
+                        ForEach(Array(appleCalendar.items(on: day).prefix(1))) { event in
+                            HStack(spacing: 3) {
+                                Circle()
+                                    .fill(Color(hex: event.colorHex))
+                                    .frame(width: 4, height: 4)
+                                Text(event.title)
+                                    .font(.system(size: 8, weight: .medium, design: .rounded))
+                                    .foregroundStyle(Color.white.opacity(0.55))
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -269,6 +286,56 @@ struct CalendarView: View {
         .help(helpText(for: day, tasks: tasks))
     }
 
+    /// The switch for the calendar overlay, plus whatever macOS is waiting on: a prompt, or
+    /// a permission that has to be changed in System Settings.
+    private var appleCalendarCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                title: "Apple Calendar",
+                subtitle: "Your own events, read-only, beside your study tasks. Nothing is ever written to your calendar.",
+                symbol: "calendar.badge.plus"
+            )
+
+            HStack(spacing: 10) {
+                Group {
+                    switch appleCalendar.access {
+                    case .granted:
+                        Toggle("Show my calendar events", isOn: $showAppleEvents)
+                            .toggleStyle(.switch)
+                        Button("Refresh") { appleCalendar.load(around: visibleMonth) }
+                            .buttonStyle(.bentoBordered)
+                            .bentoTint(.secondary)
+                    case .denied:
+                        Text("Calendar access is off. Turn it on in System Settings → Privacy & Security → Calendars.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        Link("Open Settings", destination: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!)
+                    case .unknown:
+                        Text("Study Manager FC can read your calendars so events sit beside your deadlines.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        Button("Allow access") {
+                            Task {
+                                await appleCalendar.requestAccess()
+                                appleCalendar.load(around: visibleMonth)
+                            }
+                        }
+                        .buttonStyle(.bentoBordered)
+                        .bentoTint(.primary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .surface(padding: 18)
+        .onChange(of: showAppleEvents) { _, showing in
+            if showing { appleCalendar.load(around: visibleMonth) }
+        }
+        .onChange(of: visibleMonth) { _, month in
+            if showAppleEvents { appleCalendar.load(around: month) }
+        }
+    }
+
     private var selectedDayCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(
@@ -278,6 +345,27 @@ struct CalendarView: View {
                     : "\(selectedDayTasks.count) task\(selectedDayTasks.count == 1 ? "" : "s") due on the board",
                 symbol: "calendar.badge.clock"
             )
+
+            if showAppleEvents, !appleCalendar.items(on: selectedDay).isEmpty {
+                VStack(spacing: 4) {
+                    ForEach(appleCalendar.items(on: selectedDay)) { event in
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(Color(hex: event.colorHex))
+                                .frame(width: 6, height: 6)
+                            Text(event.title)
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .lineLimit(1)
+                            Spacer(minLength: 6)
+                            Text(event.isAllDay ? "All day" : event.calendarName)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                Divider().opacity(0.2)
+            }
 
             if selectedDayTasks.isEmpty {
                 Text("No tasks are due on this day. Give a task a due date from its edit sheet and it will show up here, or add one in the Todos tab.")
