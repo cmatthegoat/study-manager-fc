@@ -35,7 +35,20 @@ struct StudyManagerFCApp: App {
             RootView()
                 .environment(store)
                 .preferredColorScheme(.dark)
+                // Every accent, gradient and button tint in the app is read from the club's
+                // palette, which lives outside SwiftUI's data flow. A view that only paints
+                // a gradient therefore looks unchanged to SwiftUI and keeps the colours it
+                // first drew with. Rebuilding the board whenever the palette changes forces
+                // every one of those surfaces to be created again, in the new colours.
+                .id(store.paletteKey)
         }
+        Window("Appearance", id: appearanceWindowID) {
+            AppearanceView()
+                .environment(store)
+                .preferredColorScheme(.dark)
+        }
+        .defaultSize(width: 320, height: 340)
+        .windowResizability(.contentSize)
     }
 }
 
@@ -142,10 +155,13 @@ extension StudyManagerFCApp {
 
 struct RootView: View {
     @Environment(AppStore.self) private var store
+    /// Held above the board so that a palette change — which rebuilds the board — does not
+    /// throw the player back to the dashboard.
+    @State private var selection: MainSection = .dashboard
 
     var body: some View {
         if store.hasCareer {
-            MainTabView()
+            MainTabView(selection: $selection)
         } else {
             ClubSelectionView()
         }
@@ -202,7 +218,8 @@ enum MainSection: String, CaseIterable, Identifiable {
 
 struct MainTabView: View {
     @Environment(AppStore.self) private var store
-    @State private var selection: MainSection = .dashboard
+    @Environment(\.openWindow) private var openWindow
+    @Binding var selection: MainSection
     @State private var showingResetConfirmation = false
     @State private var showingChangeTeam = false
     @State private var resetConfirmationsLeft = MainTabView.requiredResetConfirmations
@@ -302,7 +319,7 @@ struct MainTabView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
-                ThemeControls(vertical: false, menuWidth: 132)
+                appearanceButton
                 TransferOffersButton()
                 changeTeamButton
                 resetButton
@@ -360,6 +377,23 @@ struct MainTabView: View {
         }
         .buttonStyle(.plain)
         .help(section.title)
+    }
+
+    /// Palette and layout, in the appearance window. The board is rebuilt whenever the
+    /// palette changes, so the picker cannot live on it.
+    private var appearanceButton: some View {
+        Button {
+            openWindow(id: appearanceWindowID)
+        } label: {
+            Label("Appearance", systemImage: "paintpalette")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .foregroundStyle(.secondary)
+                .glassChrome(cornerRadius: 999, interactive: true)
+        }
+        .buttonStyle(.plain)
+        .help("Palette and layout")
     }
 
     /// Changing club keeps the career and starts a new season, so it lives beside Reset in

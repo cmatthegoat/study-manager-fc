@@ -4,12 +4,14 @@ import Foundation
 /// The bento kit's accent palette. Used for the atmospheric light leaks behind the cards
 /// and for the gauge's glowing stroke.
 extension Color {
-    static let bentoPurple = Color(hex: "9D4EDD")
-    static let bentoMagenta = Color(hex: "C77DFF")
-    static let bentoBlue = Color(hex: "0077B6")
-    static let bentoCyan = Color(hex: "00B4D8")
-    static let bentoCopper = Color(hex: "E07A5F")
-    static let bentoAmber = Color(hex: "F4A261")
+    /// Chart hues, stepped along the club's own primary towards its lighter tint, so a
+    /// chart keeps its variety while still repainting when the palette changes.
+    static var bentoPurple: Color { TeamTheme.shade(0.0) }
+    static var bentoMagenta: Color { TeamTheme.shade(0.2) }
+    static var bentoBlue: Color { TeamTheme.shade(0.4) }
+    static var bentoCyan: Color { TeamTheme.shade(0.6) }
+    static var bentoCopper: Color { TeamTheme.shade(0.8) }
+    static var bentoAmber: Color { TeamTheme.shade(1.0) }
     /// Muted cool gray for captions and small uppercase labels.
     static let studyMuted = Color(hex: "8E8E93")
 }
@@ -42,9 +44,13 @@ extension Color {
     static var studyGreen: Color { TeamTheme.primary }
     /// The managed club's secondary accent.
     static var studyTeal: Color { TeamTheme.secondary }
-    static let studyGold = Color(hex: "E6B84A")
+    /// Cash, XP and stars: a light club tint rather than a fixed gold, so the currency
+    /// icons change colour with the palette too.
+    static var studyGold: Color { TeamTheme.tint }
     static let studyInk = Color(hex: "14201B")
-    static let studyViolet = Color(hex: "7C5CFF")
+    /// The violet the skin used to keep for itself is now the midpoint of the club's two
+    /// colours, so nothing in the skin is a borrowed colour.
+    static var studyViolet: Color { TeamTheme.blend }
     static let studyAmber = Color(hex: "F08A4B")
     static let studyCanvas = Color(hex: "09090D")
 }
@@ -74,6 +80,16 @@ struct RGB {
     }
 
     var color: Color { Color(.sRGB, red: r, green: g, blue: b, opacity: 1) }
+
+    /// A point between this colour and another: 0 keeps this one, 1 gives the other.
+    func mixed(with other: RGB, amount: Double) -> RGB {
+        let t = min(1, max(0, amount))
+        return RGB(
+            r: r + (other.r - r) * t,
+            g: g + (other.g - g) * t,
+            b: b + (other.b - b) * t
+        )
+    }
 
     /// Perceived brightness, 0 (black) to 1 (white).
     var luminance: Double { 0.299 * r + 0.587 * g + 0.114 * b }
@@ -248,6 +264,29 @@ enum TeamTheme {
 
     static var secondaryIsLight: Bool { lifted(paletteSource?.secondaryHex)?.isLight ?? false }
 
+    /// A light club tint, for the accents that used to be their own fixed gold: cash, XP,
+    /// stars and the chart steps.
+    static var tint: Color {
+        base.mixed(with: RGB(r: 1, g: 1, b: 1), amount: 0.34).color
+    }
+
+    /// The midpoint between the two club colours — the middle of every sweep, and the place
+    /// the old fixed violet used to sit.
+    static var blend: Color {
+        let other = lifted(paletteSource?.secondaryHex) ?? RGB(r: 0.12, g: 0.66, b: 0.63)
+        return base.mixed(with: other, amount: 0.5).color
+    }
+
+    /// A step along the club's primary towards its tint, 0 being the primary and 1 the tint.
+    static func shade(_ amount: Double) -> Color {
+        base.mixed(with: RGB(r: 1, g: 1, b: 1), amount: 0.16 + amount * 0.46).color
+    }
+
+    /// The club's primary before any preset, used as the raw material for tints.
+    private static var base: RGB {
+        lifted(paletteSource?.primaryHex) ?? RGB(r: 0.18, g: 0.75, b: 0.44)
+    }
+
     private static func lifted(_ hex: String?) -> RGB? {
         guard let hex, let rgb = RGB(hex) else { return nil }
         let base = rgb.liftedForAccent
@@ -293,7 +332,7 @@ enum Neon {
     /// Primary → violet → secondary: the timer numerals and the big call-to-action buttons.
     static var sweep: LinearGradient {
         LinearGradient(
-            colors: [accent, Color(hex: "8B5CF6"), accentAlt],
+            colors: [accent, TeamTheme.blend, accentAlt],
             startPoint: .leading,
             endPoint: .trailing
         )
@@ -453,7 +492,7 @@ struct AppBackground: View {
                     leak(leaks[4], 0.44, diameter: reach * 0.62, at: CGPoint(x: width * 0.98, y: height * 1.04))
                     leak(leaks[5], 0.26, diameter: reach * 0.42, at: CGPoint(x: width * 0.76, y: height * 0.92))
                     // A violet bloom keeps the middle of the canvas from going flat.
-                    leak(Color(hex: "8B5CF6"), 0.20, diameter: reach * 0.50, at: CGPoint(x: width * 0.42, y: height * 0.48))
+                    leak(TeamTheme.blend, 0.20, diameter: reach * 0.50, at: CGPoint(x: width * 0.42, y: height * 0.48))
                 }
                 .blur(radius: 55)
             }
@@ -698,7 +737,7 @@ enum BentoAccent {
         switch self {
         case .primary: TeamTheme.primary
         case .secondary: TeamTheme.secondary
-        case .gold: Color(hex: "E6B84A")
+        case .gold: TeamTheme.tint
         case .white: .white
         case .danger: .red
         }

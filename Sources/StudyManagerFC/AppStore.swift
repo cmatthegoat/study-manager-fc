@@ -1142,7 +1142,9 @@ final class AppStore {
             }
             // Income has to keep pace with the prices those rises reach, and the palette
             // preset belongs to the career rather than a transient setting.
+            let clubPaletteAccent = TeamTheme.primary
             raiser.setThemePreset(.deep)
+            let deepPaletteAccent = TeamTheme.primary
             raiser.setLayoutPreset(.topBar)
             AppStore.flushPendingSaves()
             let storedTheme = try raiseStore.load()
@@ -1151,6 +1153,8 @@ final class AppStore {
                   StudyReward.calculate(kind: .homework, subject: .ext1Maths, minutes: 90, marksObtained: nil, marksTotal: nil).cash >= 2_400,
                   ThemePreset.allCases.count == 7,
                   ThemePreset.LayoutPreset.allCases.count == 3,
+                  // The accent every gradient is built from must actually move.
+                  deepPaletteAccent != clubPaletteAccent,
                   raiser.themePreset == .deep,
                   raiser.paletteKey.contains(ThemePreset.deep.rawValue),
                   raiser.layoutPreset == .topBar,
@@ -1166,7 +1170,8 @@ final class AppStore {
             AppStore.flushPendingSaves()
             guard TeamTheme.paletteOverride?.id == otherClubID,
                   (try raiseStore.load())?.paletteClubID == otherClubID,
-                  TeamTheme.primary != TeamTheme.secondary else {
+                  TeamTheme.primary != TeamTheme.secondary,
+                  TeamTheme.primary != deepPaletteAccent else {
                 print("SELF TEST FAIL: another team's palette could not be worn or saved")
                 exit(1)
             }

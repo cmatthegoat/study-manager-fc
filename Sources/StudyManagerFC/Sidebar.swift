@@ -8,9 +8,9 @@ struct AppSidebar: View {
     @Binding var selection: MainSection
     /// Icon-only rail: the same navigation with the labels, theme menus and level card gone.
     var compact: Bool = false
-    /// The compact rail hides the theme menus, so this popover is the only way back out of
-    /// the icon rail. Without it, choosing that layout stranded you in it.
-    @State private var showingThemePopover = false
+    /// Palette and layout live in their own window, so the icon rail is never a trap and the
+    /// picker is not destroyed when choosing a palette rebuilds the board.
+    @Environment(\.openWindow) private var openWindow
 
     private var club: Club? { store.managedClub }
 
@@ -39,7 +39,7 @@ struct AppSidebar: View {
                     themeButton
                 }
             } else {
-                ThemeControls()
+                appearanceButton
                     .padding(.horizontal, 2)
                     .padding(.bottom, 12)
                 levelCard
@@ -127,10 +127,35 @@ struct AppSidebar: View {
         .help(section.title)
     }
 
-    /// Palette and layout, packed into one button so the icon rail can still change either.
+    /// Opens the appearance window, where the palette and layout are chosen.
+    private var appearanceButton: some View {
+        Button {
+            openWindow(id: appearanceWindowID)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "paintpalette.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Appearance")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 8, weight: .bold))
+                    .opacity(0.5)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .glassChrome(cornerRadius: 10, interactive: true)
+        }
+        .buttonStyle(.plain)
+        .help("Palette and layout")
+    }
+
+    /// The icon-only rail keeps a single palette button, opening the same window.
     private var themeButton: some View {
         Button {
-            showingThemePopover.toggle()
+            openWindow(id: appearanceWindowID)
         } label: {
             Image(systemName: "paintpalette.fill")
                 .font(.system(size: 12, weight: .semibold))
@@ -147,11 +172,6 @@ struct AppSidebar: View {
         }
         .buttonStyle(.plain)
         .help("Palette and layout")
-        .popover(isPresented: $showingThemePopover, arrowEdge: .trailing) {
-            ThemeControls()
-                .padding(14)
-                .environment(store)
-        }
     }
 
     /// What survives of the foot of the rail when it is only icons: the level and its bar.
@@ -199,6 +219,37 @@ struct AppSidebar: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.white.opacity(0.09), lineWidth: 1)
         )
+    }
+}
+
+/// The appearance window's id, opened from the sidebar or the top bar.
+let appearanceWindowID = "appearance"
+
+/// Palette and layout in a window of their own. Choosing a palette rebuilds the board so
+/// that every gradient repaints, which would dismiss a popover or menu mid-choice, so the
+/// picker lives somewhere the rebuild cannot reach — and stays open while you try styles.
+struct AppearanceView: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("APPEARANCE")
+                    .font(.system(size: 9, weight: .black, design: .rounded))
+                    .tracking(1.4)
+                    .foregroundStyle(Neon.accent)
+                Text(store.managedClub?.name ?? "Your club")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                Text("A style shapes your club's own colours; a team palette wears that club's colours as they are. The layout is independent of both.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ThemeControls()
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .frame(width: 320, height: 340, alignment: .topLeading)
     }
 }
 
