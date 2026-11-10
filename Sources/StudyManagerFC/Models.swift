@@ -567,7 +567,7 @@ enum ClubDatabase {
     }
 }
 
-struct LineupSlot: Identifiable, Hashable {
+struct LineupSlot: Identifiable, Codable, Hashable {
     let id: String
     let label: String
     let position: PlayerPosition
@@ -580,6 +580,38 @@ struct LineupSlot: Identifiable, Hashable {
     static func slot(for id: String) -> LineupSlot? {
         all.first(where: { $0.id == id })
     }
+
+    /// The role a player standing at this point of the pitch is doing. The goalkeeper is
+    /// never derived — there is exactly one and he does not move — so everything else
+    /// follows from where the dot sits: deep and wide is a full-back, deep and central is a
+    /// centre back, the middle band splits into holding, central, advanced and wide, and the
+    /// top band is wingers and strikers.
+    static func role(atX x: Double, y: Double) -> PlayerPosition {
+        let x = min(0.98, max(0.02, x))
+        let y = min(0.97, max(0.05, y))
+        if y >= 0.68 {
+            if x < 0.30 { return .leftBack }
+            if x > 0.70 { return .rightBack }
+            return .centerBack
+        }
+        if y >= 0.42 {
+            if x < 0.22 { return .leftWing }
+            if x > 0.78 { return .rightWing }
+            if y < 0.52 { return .attackingMid }
+            if y > 0.62 { return .defensiveMid }
+            return .centralMid
+        }
+        if x < 0.28 { return .leftWing }
+        if x > 0.72 { return .rightWing }
+        return .striker
+    }
+}
+
+/// A shape the manager drew themselves: eleven slots, the goalkeeper plus ten outfield
+/// players, each parked anywhere on the pitch. Roles come from where the dots sit, so the
+/// shape is whatever the manager makes of it.
+struct CustomFormation: Codable, Hashable {
+    var slots: [LineupSlot]
 }
 
 /// Shapes the XI can be arranged in. Every one has a goalkeeper plus ten outfield players, so
@@ -1759,8 +1791,13 @@ struct GameState: Codable {
     var formation: Formation? = nil
     /// The Bulletproof Journal: mistakes logged by hand or flagged while a paper was marked.
     var mistakes: [MistakeEntry] = []
+    /// A hand-drawn shape. Nil means a preset formation is in use.
+    var customFormation: CustomFormation? = nil
 
     var activeFormation: Formation { formation ?? .f433 }
+
+    /// The slots the XI is laid out in: the drawn shape when there is one, else the preset.
+    var activeSlots: [LineupSlot] { customFormation?.slots ?? activeFormation.slots }
 
     /// Goals and assists from the season being played, rebuilt from its match reports, so the
     /// leaderboard can put the current campaign beside the career totals.
@@ -1797,6 +1834,7 @@ struct GameState: Codable {
         case matchesSinceAcademyIntake
         case assessments
         case formation
+        case customFormation
         case mistakes
         case playerPriceRise
         case lastPriceRisePercent
@@ -1888,6 +1926,7 @@ extension GameState {
         // Careers saved before formations existed have no key here and open as a 4-3-3.
         formation = try container.decodeIfPresent(Formation.self, forKey: .formation)
         mistakes = try container.decodeIfPresent([MistakeEntry].self, forKey: .mistakes) ?? []
+        customFormation = try container.decodeIfPresent(CustomFormation.self, forKey: .customFormation)
         playerPriceRise = try container.decodeIfPresent(Double.self, forKey: .playerPriceRise) ?? 0
         lastPriceRisePercent = try container.decodeIfPresent(Double.self, forKey: .lastPriceRisePercent) ?? 0
         lastPriceRiseAt = try container.decodeIfPresent(Date.self, forKey: .lastPriceRiseAt)

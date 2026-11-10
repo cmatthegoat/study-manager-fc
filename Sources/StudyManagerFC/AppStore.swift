@@ -14,6 +14,7 @@ enum GameError: LocalizedError {
     case levelTooLow(Int)
     case invalidPack
     case academyMaxLevel
+    case invalidFormation
     case invalidPriceRise
     case priceRiseCapped
     case noFixtures
@@ -32,6 +33,7 @@ enum GameError: LocalizedError {
         case .levelTooLow(let level): "Reach level \(level) to unlock this pack."
         case .invalidPack: "That pack is not available."
         case .academyMaxLevel: "Your youth academy is already at its highest level."
+        case .invalidFormation: "A shape needs eleven players: one goalkeeper and ten outfield."
         case .invalidPriceRise: "Enter an increase above zero — prices can only ever go up."
         case .priceRiseCapped: "Prices are already raised as far as they go, at ten times the standard."
         case .noFixtures: "There are no fixtures ready to simulate."
@@ -1174,6 +1176,52 @@ final class AppStore {
                 exit(1)
             }
 
+            // Any shape can be drawn and saved: eleven dots, roles read from where they stand,
+            // the XI filled around them, and a shape that is not eleven players refused.
+            let drawnShape: [LineupSlot] = [
+                LineupSlot(id: "gk", label: "GK", position: .goalkeeper, x: 0.50, y: 0.93),
+                LineupSlot(id: "d1", label: "LB", position: .leftBack, x: 0.20, y: 0.78),
+                LineupSlot(id: "d2", label: "CB", position: .centerBack, x: 0.50, y: 0.80),
+                LineupSlot(id: "d3", label: "RB", position: .rightBack, x: 0.80, y: 0.78),
+                LineupSlot(id: "m1", label: "LW", position: .leftWing, x: 0.10, y: 0.52),
+                LineupSlot(id: "m2", label: "CDM", position: .defensiveMid, x: 0.35, y: 0.64),
+                LineupSlot(id: "m3", label: "CM", position: .centralMid, x: 0.50, y: 0.50),
+                LineupSlot(id: "m4", label: "CM", position: .centralMid, x: 0.65, y: 0.64),
+                LineupSlot(id: "m5", label: "RW", position: .rightWing, x: 0.90, y: 0.52),
+                LineupSlot(id: "s1", label: "ST", position: .striker, x: 0.40, y: 0.20),
+                LineupSlot(id: "s2", label: "ST", position: .striker, x: 0.60, y: 0.20)
+            ]
+            try raiser.saveCustomFormation(drawnShape)
+            AppStore.flushPendingSaves()
+            let drawnShapeSave = try raiseStore.load()
+            let shortShapeRefused = (try? raiser.saveCustomFormation(Array(drawnShape.dropLast()))) == nil
+            // Wingers belong to the attack group, so the drawn 3-1-1-1-2-2 reads 3-3-4.
+            let drawnGroups = raiser.lineupSlots.map(\.position.group)
+            let drawnDefence = drawnGroups.filter { $0 == .defence }.count
+            let drawnMidfield = drawnGroups.filter { $0 == .midfield }.count
+            let drawnAttack = drawnGroups.filter { $0 == .attack }.count
+            guard LineupSlot.role(atX: 0.1, y: 0.85) == .leftBack,
+                  LineupSlot.role(atX: 0.5, y: 0.2) == .striker,
+                  raiser.isCustomFormation,
+                  raiser.lineupSlots.count == 11,
+                  drawnDefence == 3,
+                  drawnMidfield == 3,
+                  drawnAttack == 4,
+                  raiser.state.lineup.count == 11,
+                  raiser.squadMetrics.overall > 0,
+                  drawnShapeSave?.customFormation?.slots.count == 11,
+                  shortShapeRefused else {
+                print("SELF TEST FAIL: a drawn formation did not save, fill the XI, or refuse a short shape (\(drawnDefence)-\(drawnMidfield)-\(drawnAttack), \(raiser.state.lineup.count) picked, saved \(drawnShapeSave?.customFormation?.slots.count ?? 0), short refused \(shortShapeRefused))")
+                exit(1)
+            }
+            raiser.clearCustomFormation()
+            guard !raiser.isCustomFormation,
+                  raiser.lineupSlots.count == 11,
+                  raiser.state.lineup.count == 11 else {
+                print("SELF TEST FAIL: returning to the preset shape left the XI in pieces")
+                exit(1)
+            }
+
             // Later checks price players of their own; the test career is the only one alive.
             PlayerPricing.manualRise = 0
 
@@ -1218,7 +1266,7 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, handwritten pages turned into page images, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, seven club-relative styles plus every team's own palette, and three layouts, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review")
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, marking JSON parsing, handwritten pages turned into page images, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, seven club-relative styles plus every team's own palette, three layouts, hand-drawn formations, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -1331,7 +1379,10 @@ final class AppStore {
     /// The shape the XI is being picked in. Careers saved before formations get a 4-3-3.
     var formation: Formation { state.activeFormation }
 
-    var lineupSlots: [LineupSlot] { formation.slots }
+    var lineupSlots: [LineupSlot] { state.activeSlots }
+
+    /// Whether the XI is arranged in a shape the manager drew rather than a preset.
+    var isCustomFormation: Bool { state.customFormation != nil }
 
     var lineupIsComplete: Bool {
         lineupSlots.allSatisfy { slot in
@@ -2249,7 +2300,7 @@ final class AppStore {
     }
 
     func autoPickSquad() {
-        let result = PlayerFactory.autoLineup(players: state.players, formation: formation)
+        let result = PlayerFactory.autoLineup(players: state.players, slots: lineupSlots)
         var draft = state
         draft.lineup = result.0
         draft.bench = result.1
@@ -2260,7 +2311,10 @@ final class AppStore {
     /// has the same slot, and the vacancies a new shape creates are filled from the players it
     /// displaced, then the bench, then the squad — so changing formation never halves your XI.
     func setFormation(_ newFormation: Formation) {
-        guard newFormation != formation, state.managedClubID != nil else { return }
+        // Picking a preset also leaves a drawn shape, even when the preset is the one the
+        // shape was drawn over.
+        guard state.managedClubID != nil,
+              newFormation != formation || state.customFormation != nil else { return }
         var draft = state
         let playerMap = Dictionary(uniqueKeysWithValues: draft.players.map { ($0.id, $0) })
         let newSlotIDs = Set(newFormation.slots.map(\.id))
@@ -2301,6 +2355,7 @@ final class AppStore {
         }
 
         draft.formation = newFormation
+        draft.customFormation = nil
         draft.lineup = kept
         draft.bench.removeAll { kept.values.contains($0) }
         // Anyone the new shape dropped takes a free bench place rather than dropping off the
@@ -2309,6 +2364,57 @@ final class AppStore {
             if !draft.bench.contains(id) { draft.bench.append(id) }
         }
         commit(draft)
+    }
+
+    /// Saves a shape the manager drew. Every slot that survives keeps its player; a slot the
+    /// shape adds is filled with the best unused player for it, so saving a shape never
+    /// quietly empties the XI.
+    func saveCustomFormation(_ slots: [LineupSlot]) throws {
+        guard hasCareer else { throw GameError.noCareer }
+        let keepers = slots.filter { $0.position == .goalkeeper }
+        guard slots.count == 11,
+              keepers.count == 1,
+              Set(slots.map(\.id)).count == slots.count else {
+            throw GameError.invalidFormation
+        }
+        var draft = state
+        draft.lineup = remappedLineup(for: slots, from: draft)
+        draft.customFormation = CustomFormation(slots: slots)
+        draft.bench.removeAll { draft.lineup.values.contains($0) }
+        commit(draft)
+    }
+
+    /// Hands the XI back to the preset shape, keeping the players that shape can hold.
+    func clearCustomFormation() {
+        guard state.customFormation != nil else { return }
+        var draft = state
+        draft.customFormation = nil
+        draft.lineup = remappedLineup(for: draft.activeSlots, from: draft)
+        draft.bench.removeAll { draft.lineup.values.contains($0) }
+        commit(draft)
+    }
+
+    /// The XI a set of slots can hold: every slot that already has a player keeps him, and
+    /// each empty slot takes the best unused player for it.
+    private func remappedLineup(for slots: [LineupSlot], from source: GameState) -> [String: UUID] {
+        let playerMap = Dictionary(uniqueKeysWithValues: source.players.map { ($0.id, $0) })
+        var kept: [String: UUID] = [:]
+        for slot in slots {
+            guard let id = source.lineup[slot.id], playerMap[id] != nil else { continue }
+            kept[slot.id] = id
+        }
+        var pool = source.players.filter { player in !kept.values.contains(player.id) }
+        for slot in slots where kept[slot.id] == nil {
+            guard let best = pool.max(by: { lhs, rhs in
+                let left = lhs.adjustedRating(for: slot)
+                let right = rhs.adjustedRating(for: slot)
+                if left == right { return lhs.overall < rhs.overall }
+                return left < right
+            }) else { break }
+            kept[slot.id] = best.id
+            pool.removeAll { $0.id == best.id }
+        }
+        return kept
     }
 
     @discardableResult

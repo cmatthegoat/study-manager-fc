@@ -7,6 +7,7 @@ struct SquadView: View {
     @State private var selectedPlayer: Player?
     @State private var searchText = ""
     @State private var groupFilter: PositionGroup?
+    @State private var showingShapeEditor = false
 
     private var metrics: SquadMetrics { store.squadMetrics }
 
@@ -123,6 +124,10 @@ struct SquadView: View {
                 HStack {
                     HStack(spacing: 7) {
                         formationMenu
+                        editShapeButton
+                        if store.isCustomFormation {
+                            Pill(text: "CUSTOM SHAPE", color: .studyTeal, icon: "scribble.variable")
+                        }
                         if store.lineupIsComplete {
                             Pill(text: "XI COMPLETE", color: .studyGreen, icon: "checkmark")
                         } else {
@@ -145,6 +150,10 @@ struct SquadView: View {
                     selectedSlot = slot
                 }
                 .frame(maxWidth: 590)
+                .sheet(isPresented: $showingShapeEditor) {
+                    FormationEditorView(slots: store.lineupSlots)
+                        .environment(store)
+                }
 
                 if !injuredStarters.isEmpty {
                     injuryBanner
@@ -185,6 +194,22 @@ struct SquadView: View {
             width: 130
         )
         .help("Change formation")
+    }
+
+    /// Opens the free-form designer: any eleven dots, anywhere on the pitch.
+    private var editShapeButton: some View {
+        Button {
+            showingShapeEditor = true
+        } label: {
+            Label("Design shape", systemImage: "scribble.variable")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .foregroundStyle(Color.studyTeal)
+                .glassChrome(cornerRadius: 999, interactive: true)
+        }
+        .buttonStyle(.plain)
+        .help("Draw your own formation")
     }
 
     /// Names the wounded starters and how long they are out, so a blocked matchday has a

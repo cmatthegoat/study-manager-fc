@@ -354,10 +354,18 @@ enum PlayerFactory {
         players: [Player],
         formation: Formation = .f433
     ) -> ([String: UUID], [UUID]) {
+        autoLineup(players: players, slots: formation.slots)
+    }
+
+    /// Fills any set of slots, so a hand-drawn shape is picked as readily as a preset one.
+    static func autoLineup(
+        players: [Player],
+        slots: [LineupSlot]
+    ) -> ([String: UUID], [UUID]) {
         var used = Set<UUID>()
         var lineup: [String: UUID] = [:]
 
-        for slot in formation.slots {
+        for slot in slots {
             let candidate = players
                 .filter { !used.contains($0.id) }
                 .max { lhs, rhs in

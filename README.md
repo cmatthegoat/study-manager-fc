@@ -93,6 +93,15 @@ and the 95,000 academy rungs are set in the tens of thousands. A new career star
 **Career.** Real clubs and squads imported from the EA FC database, negotiated
 transfers, a five-level youth academy that intakes every five matches, player
 development and retirement at 40, and a full season/schedule/trophy pipeline.
+The XI can also be drawn freehand: **Design shape** on the Squad tab opens a pitch of eleven
+dots and every outfield player can be dragged anywhere. A dot's role is read from where it
+stands — deep and wide is a full-back, deep and central a centre back, the middle band
+splits into holding, central, advanced and wide, and the top band is wingers and strikers —
+so any arrangement works and there is no template to stay inside. Slots can be added and
+removed as long as the XI ends up as one goalkeeper plus ten outfield players, saving keeps
+whoever already held a place, and the drawn shape is stored with the career; picking a
+preset formation again hands the XI back.
+
 Player prices are the rating curve with a 50% premium and then another 35% on top,
 just over double the bare curve. The **Market prices** card on the Transfer Market tab
 lets you raise every price by hand: a percentage stacks on the current prices, is saved
