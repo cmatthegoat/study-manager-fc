@@ -141,6 +141,7 @@ final class AppStore {
         }
         migrateLegacySaveIfNeeded()
         purgeCompletedTodos()
+        randomisePaletteIfAsked()
         // Every price in the app reads the career's manual rise, so publish it before any
         // view asks what a player costs.
         PlayerPricing.manualRise = max(0, state.playerPriceRise)
@@ -148,6 +149,19 @@ final class AppStore {
         TeamTheme.paletteOverride = paletteClub
         TeamTheme.club = managedClub
         SubjectTheme.apply(state.subjectColors)
+    }
+
+    /// Some players like the board to look different each morning: one random style, or one
+    /// random team's colours. Applied to the loaded career and mirrored into `TeamTheme` by
+    /// the sync in `init`, but never saved — the next launch rolls again.
+    private func randomisePaletteIfAsked() {
+        guard state.randomPaletteOnLaunch, hasCareer else { return }
+        if Bool.random(), let club = ClubDatabase.all.randomElement() {
+            state.paletteClubID = club.id
+        } else {
+            state.paletteClubID = nil
+            state.themePreset = ThemePreset.allCases.randomElement()?.rawValue ?? ThemePreset.club.rawValue
+        }
     }
 
     /// The colour a subject is drawn in, falling back to its default until it is customised.
@@ -1224,6 +1238,43 @@ final class AppStore {
                   raiser.lineupSlots.count == 11,
                   raiser.state.lineup.count == 11 else {
                 print("SELF TEST FAIL: returning to the preset shape left the XI in pieces")
+                exit(1)
+            }
+
+            // A drawn shape can join a named library, and a mistake climbs the review ladder
+            // when recalled and drops back to the first rung when it is not.
+            try raiser.saveFormationShape(name: "Low block", slots: drawnShape)
+            let libraryShape = raiser.savedFormations.first
+            let blankNameRefused = (try? raiser.saveFormationShape(name: "  ", slots: drawnShape)) == nil
+            let reviewID = raiser.addMistake(MistakeEntry(subject: .ext1Maths, mistake: "Sign error", fix: "Check signs"))
+            if let reviewID { raiser.reviewMistake(reviewID, recalled: true) }
+            let climbedStage = raiser.mistakes.first { $0.id == reviewID }?.stage
+            if let reviewID { raiser.reviewMistake(reviewID, recalled: false) }
+            let droppedStage = raiser.mistakes.first { $0.id == reviewID }?.stage
+            guard libraryShape?.name == "Low block",
+                  libraryShape?.slots.count == 11,
+                  blankNameRefused,
+                  climbedStage == 1,
+                  droppedStage == 0,
+                  raiser.mistakes.first(where: { $0.id == reviewID })?.nextReviewAt != nil else {
+                print("SELF TEST FAIL: the formation library or the review ladder lost track")
+                exit(1)
+            }
+            if let reviewID { raiser.deleteMistake(reviewID) }
+            if let libraryShape { raiser.deleteSavedFormation(libraryShape.id) }
+
+            // Every club colour, under every style, has to stay readable on the canvas.
+            let canvas = RGB("0A0A1A") ?? RGB(r: 0, g: 0, b: 0)
+            var worstContrast = Double.greatestFiniteMagnitude
+            for preset in ThemePreset.allCases {
+                for club in ClubDatabase.all {
+                    for hex in [club.primaryHex, club.secondaryHex] {
+                        worstContrast = min(worstContrast, TeamTheme.previewAccent(hex, preset: preset).contrast(with: canvas))
+                    }
+                }
+            }
+            guard worstContrast >= 2.0 else {
+                print("SELF TEST FAIL: a club palette is unreadable on the canvas (worst contrast \(String(format: "%.2f", worstContrast)))")
                 exit(1)
             }
 
@@ -2399,6 +2450,90 @@ final class AppStore {
         commit(draft)
     }
 
+    var savedFormations: [NamedFormation] { state.savedFormations }
+
+    /// Stores a drawn shape under a name. Saving the same name again updates that shape
+    /// rather than piling up duplicates.
+    func saveFormationShape(name: String, slots: [LineupSlot]) throws {
+        guard hasCareer else { throw GameError.noCareer }
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty,
+              slots.count == 11,
+              slots.filter({ $0.position == .goalkeeper }).count == 1 else {
+            throw GameError.invalidFormation
+        }
+        var draft = state
+        if let index = draft.savedFormations.firstIndex(where: {
+            $0.name.caseInsensitiveCompare(cleaned) == .orderedSame
+        }) {
+            draft.savedFormations[index].slots = slots
+        } else {
+            draft.savedFormations.insert(NamedFormation(name: cleaned, slots: slots), at: 0)
+        }
+        commit(draft)
+    }
+
+    func applySavedFormation(_ id: UUID) {
+        guard let shape = state.savedFormations.first(where: { $0.id == id }) else { return }
+        try? saveCustomFormation(shape.slots)
+    }
+
+    func deleteSavedFormation(_ id: UUID) {
+        guard state.savedFormations.contains(where: { $0.id == id }) else { return }
+        var draft = state
+        draft.savedFormations.removeAll { $0.id == id }
+        commit(draft)
+    }
+
+    // MARK: - Spaced review
+
+    /// The rungs of the review ladder, in days: tomorrow, three days, a week, a month.
+    static let reviewLadder: [Double] = MistakeEntry.reviewIntervals
+
+    /// Open entries whose retest has arrived, longest overdue first.
+    var dueMistakeReviews: [MistakeEntry] {
+        let now = Date()
+        return state.mistakes
+            .filter { !$0.isResolved && $0.reviewDueAt <= now }
+            .sorted { $0.reviewDueAt < $1.reviewDueAt }
+    }
+
+    /// Answers a scheduled retest: a recalled mistake moves up the ladder, one that comes
+    /// back wrong drops to the first rung and is due again tomorrow.
+    func reviewMistake(_ id: UUID, recalled: Bool) {
+        guard let index = state.mistakes.firstIndex(where: { $0.id == id }) else { return }
+        var draft = state
+        var entry = draft.mistakes[index]
+        entry.reviewCount += 1
+        entry.lastReviewed = Date()
+        let stage = recalled ? min(entry.stage + 1, Self.reviewLadder.count - 1) : 0
+        entry.reviewStage = stage
+        entry.nextReviewAt = Date().addingTimeInterval(Self.reviewLadder[stage] * 86_400)
+        draft.mistakes[index] = entry
+        commit(draft)
+    }
+
+    // MARK: - Backups
+
+    /// The newest backup that still decodes, if any.
+    func latestBackup() -> GameState? {
+        try? persistence.loadLatestBackup()
+    }
+
+    /// Swaps the live career for the newest backup. Three are kept, rotated on every save.
+    func restoreLatestBackup() {
+        guard let backup = latestBackup() else { return }
+        Self.flushPendingSaves()
+        commit(backup)
+    }
+
+    func setRandomPaletteOnLaunch(_ enabled: Bool) {
+        guard hasCareer, state.randomPaletteOnLaunch != enabled else { return }
+        var draft = state
+        draft.randomPaletteOnLaunch = enabled
+        commit(draft)
+    }
+
     /// The XI a set of slots can hold: every slot that already has a player keeps him, and
     /// each empty slot takes the best unused player for it.
     private func remappedLineup(for slots: [LineupSlot], from source: GameState) -> [String: UUID] {
@@ -2569,6 +2704,11 @@ final class AppStore {
         // The topic name is copied in so the entry still reads correctly if the topic goes.
         if stored.subtopicID != nil, stored.subtopicName == nil {
             stored.subtopicName = state.subtopics.first { $0.id == stored.subtopicID }?.name
+        }
+        // Every new mistake enters the spaced-review ladder, due tomorrow.
+        if stored.nextReviewAt == nil, !stored.isResolved {
+            stored.reviewStage = 0
+            stored.nextReviewAt = Date().addingTimeInterval(MistakeEntry.reviewIntervals[0] * 86_400)
         }
         var draft = state
         draft.mistakes.insert(stored, at: 0)

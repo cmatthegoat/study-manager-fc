@@ -246,10 +246,25 @@ struct AppearanceView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             ThemeControls()
+            Divider().opacity(0.25)
+            Toggle(
+                "Different palette each launch",
+                isOn: Binding(
+                    get: { store.state.randomPaletteOnLaunch },
+                    set: { store.setRandomPaletteOnLaunch($0) }
+                )
+            )
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .toggleStyle(.switch)
+            Button("Restore last backup") {
+                store.restoreLatestBackup()
+            }
+            .buttonStyle(.bentoBordered)
+            .help("Swap the career for the newest of the three rotating backups")
             Spacer(minLength: 0)
         }
         .padding(18)
-        .frame(width: 320, height: 340, alignment: .topLeading)
+        .frame(width: 320, height: 430, alignment: .topLeading)
     }
 }
 

@@ -334,6 +334,7 @@ private struct WeekAheadCard: View {
 
 private struct FocusTimerCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The paused session's review sheet. It can also be reopened from the card if the
     /// sheet is dismissed without logging.
     @State private var showingReview = false
@@ -384,7 +385,7 @@ private struct FocusTimerCard: View {
                 .foregroundStyle(Neon.sweep)
                 .shadow(color: Neon.accent.opacity(0.55), radius: 22)
                 .shadow(color: Neon.accentAlt.opacity(0.35), radius: 10)
-                .contentTransition(.numericText())
+                .contentTransition(reduceMotion ? .identity : .numericText())
                 .frame(maxWidth: .infinity)
 
             HStack(spacing: 12) {

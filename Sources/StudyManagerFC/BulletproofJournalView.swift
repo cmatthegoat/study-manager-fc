@@ -99,6 +99,47 @@ struct BulletproofJournalView: View {
         all.filter { !$0.isResolved && $0.reviewCount == 0 }
     }
 
+    /// The spaced-review queue: entries whose 1/3/7/30-day retest has come round. Two
+    /// answers, and the entry climbs the ladder or drops back to the bottom.
+    private var reviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(
+                title: "Due for review",
+                subtitle: "\(store.dueMistakeReviews.count) waiting — get them right to space them further apart",
+                symbol: "arrow.triangle.2.circlepath"
+            )
+            ForEach(store.dueMistakeReviews.prefix(4)) { entry in
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.mistake)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(2)
+                        Text("\(entry.subject.shortName)\(entry.subtopicName.map { " · \($0)" } ?? "") · rung \(entry.stage + 1) of \(MistakeEntry.reviewIntervals.count)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Button("Again") { store.reviewMistake(entry.id, recalled: false) }
+                        .buttonStyle(.bentoBordered)
+                        .bentoTint(.secondary)
+                    Button("Got it") { store.reviewMistake(entry.id, recalled: true) }
+                        .buttonStyle(.bentoProminent)
+                        .bentoTint(.primary)
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Neon.panel.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Neon.border, lineWidth: 1)
+        )
+    }
+
     private struct RepeatGroup: Identifiable {
         let subject: StudySubject
         let topic: String
@@ -121,6 +162,7 @@ struct BulletproofJournalView: View {
                 )
 
                 summaryCard
+                if !store.dueMistakeReviews.isEmpty { reviewCard }
                 if !repeats.isEmpty { repeatsCard }
 
                 if isAdding {

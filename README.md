@@ -47,8 +47,11 @@ costing you the most marks and groups repeats by topic; entries can be revised,
 marked beaten, reopened, edited, filtered by subject or searched. Scans are
 stored in `JournalAttachments/` beside the save, and deleting an entry deletes
 its scan. Entries filed from a marked paper carry that paper's title, and the
-Dashboard shows the three mistakes that most need revising. The journal pays no
-cash or XP, so it cannot be farmed.
+Dashboard shows the three mistakes that most need revising. Each open entry is also
+scheduled: a new mistake comes back after a day, then three days, a week and a month. The
+tab opens with a **Due for review** card, and answering *Got it* moves the entry up the
+ladder while *Again* drops it back to tomorrow. The journal pays no cash or XP, so it
+cannot be farmed.
 
 **Cloud marking fallback.** Marking runs on Apple's on-device model by default.
 If that model is unavailable, or a paper outgrows its context window, OpenRouter
@@ -97,7 +100,9 @@ The XI can also be drawn freehand: **Design shape** on the Squad tab opens a pit
 dots and every outfield player can be dragged anywhere. A dot's role is read from where it
 stands — deep and wide is a full-back, deep and central a centre back, the middle band
 splits into holding, central, advanced and wide, and the top band is wingers and strikers —
-so any arrangement works and there is no template to stay inside. Slots can be added and
+so any arrangement works and there is no template to stay inside. Dots settle onto a
+faint grid when released, so a shape drawn quickly still lines up, and any shape can be
+named and saved to a library to load again later. Slots can be added and
 removed as long as the XI ends up as one goalkeeper plus ten outfield players, saving keeps
 whoever already held a place, and the drawn shape is stored with the career; picking a
 preset formation again hands the XI back.
@@ -115,7 +120,11 @@ rebuilds the board so that every gradient, button fill and selected row repaints
 colours, and your chosen section is kept across the rebuild. Every accent is derived from
 the palette — timer numerals, button fills, the selected menu row, chart hues, even the cash
 and XP icons — so only warnings, injuries, player rarity and the per-subject colours you
-pick yourself keep colours of their own. **LAYOUT** switches the board between the sidebar, an icon-only rail and a
+pick yourself keep colours of their own. The same window holds a switch for a different
+palette on every launch — a random style or a random team's colours, never saved back —
+and a button that restores the newest save backup. With Reduce Motion switched on in
+macOS, the button press animations, the readiness arc and the rolling timer digits all
+stop moving. **LAYOUT** switches the board between the sidebar, an icon-only rail and a
 row of sections across the top; palette and layout are saved with the career and are
 independent of each other. A club never
 counters below the bid it is answering: a bid within a whisker of the asking price
@@ -175,7 +184,10 @@ Intelligence enabled; everything else runs on macOS 14.
 
 The career is written to `~/Library/Application Support/StudyManagerFC/career.json`.
 
-Saves are schema-versioned and older ones migrate on load.
+Saves are schema-versioned and older ones migrate on load. Every save also rotates three
+backups — `career-backup-1.json` through `career-backup-3.json` in the same folder — and
+**Restore last backup** in the Appearance window swaps the live career for the newest one
+that still decodes.
 
 ## Player database
 

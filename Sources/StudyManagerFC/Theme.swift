@@ -94,6 +94,21 @@ struct RGB {
     /// Perceived brightness, 0 (black) to 1 (white).
     var luminance: Double { 0.299 * r + 0.587 * g + 0.114 * b }
 
+    /// WCAG relative luminance, for contrast ratios.
+    var relativeLuminance: Double {
+        func channel(_ value: Double) -> Double {
+            value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    /// Contrast with another colour, 1 (none) to 21 (black on white).
+    func contrast(with other: RGB) -> Double {
+        let a = relativeLuminance
+        let b = other.relativeLuminance
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
     var isLight: Bool { luminance > 0.62 }
 
     /// Raises a club colour's brightness while keeping its hue and saturation, so a dark
@@ -227,7 +242,15 @@ enum ThemePreset: String, CaseIterable, Identifiable {
             hsv.s = min(1, hsv.s * 1.05)
             hsv.v = min(1, hsv.v * 1.02)
         }
-        return hsv.rgb
+        // No accent may sink into the near-black canvas. A saturated blue under Deep is
+        // physically dark in luminance terms, so it is lifted until it clears the floor —
+        // this is the invariant the self-test checks across every club and style.
+        var result = hsv.rgb
+        while result.relativeLuminance < 0.065, hsv.v < 1 {
+            hsv.v = min(1, hsv.v + 0.02)
+            result = hsv.rgb
+        }
+        return result
     }
 }
 
@@ -280,6 +303,13 @@ enum TeamTheme {
     /// A step along the club's primary towards its tint, 0 being the primary and 1 the tint.
     static func shade(_ amount: Double) -> Color {
         base.mixed(with: RGB(r: 1, g: 1, b: 1), amount: 0.16 + amount * 0.46).color
+    }
+
+    /// The accent a given club colour becomes under a preset, without touching the live
+    /// theme — used by the self-test to prove every combination stays legible.
+    static func previewAccent(_ hex: String, preset: ThemePreset) -> RGB {
+        guard let rgb = RGB(hex) else { return base }
+        return preset.apply(to: rgb.liftedForAccent)
     }
 
     /// The club's primary before any preset, used as the raw material for tints.
@@ -633,6 +663,8 @@ struct BentoGaugeView: View {
             : [Color.bentoCopper, .bentoAmber, .white, Color.bentoCyan]
     }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         let clamped = min(1, max(0, progress))
         ZStack {
@@ -653,7 +685,7 @@ struct BentoGaugeView: View {
                 )
                 .rotationEffect(.degrees(90))
                 .shadow(color: tint.opacity(0.6), radius: 8)
-                .animation(.spring(response: 0.5, dampingFraction: 0.82), value: clamped)
+                .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.82), value: clamped)
             // High-brightness node riding the end of the active arc.
             if clamped > 0.005 {
                 let radians = (360 * (0.15 + clamped * 0.70) + 90) * .pi / 180
@@ -662,13 +694,13 @@ struct BentoGaugeView: View {
                     .frame(width: 13, height: 13)
                     .shadow(color: tint.opacity(0.95), radius: 7)
                     .offset(x: cos(radians) * 70, y: sin(radians) * 70)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.82), value: clamped)
+                    .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.82), value: clamped)
             }
             VStack(spacing: 2) {
                 Text("\(Int(clamped * 100))%")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                    .contentTransition(.numericText())
+                    .contentTransition(reduceMotion ? .identity : .numericText())
                 Text(label)
                     .font(.system(size: 9, weight: .semibold))
                     .tracking(1.2)
@@ -776,6 +808,7 @@ extension View {
 struct BentoProminentButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.bentoTint) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -786,9 +819,9 @@ struct BentoProminentButtonStyle: ButtonStyle {
             .overlay(shape.stroke(Color.white.opacity(0.28), lineWidth: 1))
             .foregroundStyle(accent.onColor)
             .opacity(isEnabled ? 1 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
             .shadow(color: accent.color.opacity(configuration.isPressed ? 0.30 : 0.62), radius: 16, y: 5)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 
     /// Gradient fills for the club accents, a flat wash for the neutral roles.
@@ -811,6 +844,7 @@ struct BentoProminentButtonStyle: ButtonStyle {
 struct BentoBorderedButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.bentoTint) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -821,8 +855,8 @@ struct BentoBorderedButtonStyle: ButtonStyle {
             .overlay(shape.stroke(Color.white.opacity(0.18), lineWidth: 1))
             .foregroundStyle(accent.color)
             .opacity(isEnabled ? 1 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

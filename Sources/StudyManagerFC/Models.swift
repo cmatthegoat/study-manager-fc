@@ -614,6 +614,13 @@ struct CustomFormation: Codable, Hashable {
     var slots: [LineupSlot]
 }
 
+/// A drawn shape saved under a name, so several can live side by side.
+struct NamedFormation: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var name: String
+    var slots: [LineupSlot]
+}
+
 /// Shapes the XI can be arranged in. Every one has a goalkeeper plus ten outfield players, so
 /// nothing about match strength normalisation has to change per formation.
 /// Slot ids are shared between shapes wherever the role is the same (`gk`, `lb`, `cb1`…), which
@@ -988,6 +995,20 @@ struct MistakeEntry: Identifiable, Codable, Hashable {
     /// Set once the student is confident the error is gone. Resolved entries stay as proof
     /// of the fix rather than being deleted.
     var isResolved: Bool = false
+    /// Spaced review: which rung of the 1/3/7/30-day ladder this entry sits on. Optional so
+    /// entries written before reviews existed still open.
+    var reviewStage: Int? = nil
+    /// When this entry next deserves a retest. Nil falls back to a day after it was written.
+    var nextReviewAt: Date? = nil
+
+    /// The rungs of the ladder, in days: tomorrow, three days, a week, a month.
+    static let reviewIntervals: [Double] = [1, 3, 7, 30]
+
+    /// The rung this entry is on, treating entries written before reviews as the first.
+    var stage: Int { reviewStage ?? 0 }
+
+    /// When this entry is due. A legacy entry is due once it is a day old.
+    var reviewDueAt: Date { nextReviewAt ?? date.addingTimeInterval(86_400) }
 
     var isEmpty: Bool {
         mistake.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1793,6 +1814,10 @@ struct GameState: Codable {
     var mistakes: [MistakeEntry] = []
     /// A hand-drawn shape. Nil means a preset formation is in use.
     var customFormation: CustomFormation? = nil
+    /// Shapes saved under a name in the designer.
+    var savedFormations: [NamedFormation] = []
+    /// Wear a different palette each time the app opens.
+    var randomPaletteOnLaunch: Bool = false
 
     var activeFormation: Formation { formation ?? .f433 }
 
@@ -1835,6 +1860,8 @@ struct GameState: Codable {
         case assessments
         case formation
         case customFormation
+        case savedFormations
+        case randomPaletteOnLaunch
         case mistakes
         case playerPriceRise
         case lastPriceRisePercent
@@ -1927,6 +1954,8 @@ extension GameState {
         formation = try container.decodeIfPresent(Formation.self, forKey: .formation)
         mistakes = try container.decodeIfPresent([MistakeEntry].self, forKey: .mistakes) ?? []
         customFormation = try container.decodeIfPresent(CustomFormation.self, forKey: .customFormation)
+        savedFormations = try container.decodeIfPresent([NamedFormation].self, forKey: .savedFormations) ?? []
+        randomPaletteOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .randomPaletteOnLaunch) ?? false
         playerPriceRise = try container.decodeIfPresent(Double.self, forKey: .playerPriceRise) ?? 0
         lastPriceRisePercent = try container.decodeIfPresent(Double.self, forKey: .lastPriceRisePercent) ?? 0
         lastPriceRiseAt = try container.decodeIfPresent(Date.self, forKey: .lastPriceRiseAt)

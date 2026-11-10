@@ -12,7 +12,13 @@ struct FormationEditorView: View {
     @State private var slots: [LineupSlot]
     @State private var selectedID: String?
     @State private var errorMessage: String?
+    @State private var shapeName = ""
     private let startingSlots: [LineupSlot]
+
+    /// The grid a dot settles onto. Five lanes across and six rows from the back line to the
+    /// front, which is enough freedom for any shape while still looking deliberate.
+    private static let snapColumns: [Double] = [0.12, 0.30, 0.50, 0.70, 0.88]
+    private static let snapRows: [Double] = [0.16, 0.31, 0.45, 0.59, 0.72, 0.87]
 
     init(slots: [LineupSlot]) {
         self.startingSlots = slots
@@ -82,6 +88,18 @@ struct FormationEditorView: View {
                         )
                     )
                 PitchMarkings()
+                // The snap grid, faint enough to guide without drawing attention.
+                ForEach(Self.snapRows.indices, id: \.self) { row in
+                    ForEach(Self.snapColumns.indices, id: \.self) { column in
+                        Circle()
+                            .fill(Color.white.opacity(0.14))
+                            .frame(width: 3, height: 3)
+                            .position(
+                                x: proxy.size.width * Self.snapColumns[column],
+                                y: proxy.size.height * Self.snapRows[row]
+                            )
+                    }
+                }
                 ForEach(slots) { slot in
                     dot(for: slot, in: proxy.size)
                 }
@@ -126,6 +144,29 @@ struct FormationEditorView: View {
                 guard slot.position != .goalkeeper else { return }
                 move(slot.id, to: value.location, in: size)
             }
+            .onEnded { value in
+                guard slot.position != .goalkeeper else { return }
+                snap(slot.id, to: value.location, in: size)
+            }
+    }
+
+    /// Settles a dot onto the nearest grid point when it is let go, so a shape drawn quickly
+    /// still lines up.
+    private func snap(_ id: String, to point: CGPoint, in size: CGSize) {
+        guard size.width > 0, size.height > 0,
+              let index = slots.firstIndex(where: { $0.id == id }) else { return }
+        let x = point.x / size.width
+        let y = point.y / size.height
+        let snappedX = Self.snapColumns.min { abs($0 - x) < abs($1 - x) } ?? x
+        let snappedY = Self.snapRows.min { abs($0 - y) < abs($1 - y) } ?? y
+        let position = LineupSlot.role(atX: snappedX, y: snappedY)
+        slots[index] = LineupSlot(
+            id: slots[index].id,
+            label: position.abbreviation,
+            position: position,
+            x: snappedX,
+            y: snappedY
+        )
     }
 
     private func move(_ id: String, to point: CGPoint, in size: CGSize) {
@@ -150,6 +191,42 @@ struct FormationEditorView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if !store.savedFormations.isEmpty {
+                Menu("Load a saved shape") {
+                    ForEach(store.savedFormations) { shape in
+                        Button(shape.name) {
+                            slots = shape.slots
+                            selectedID = nil
+                            errorMessage = nil
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .frame(maxWidth: 220, alignment: .leading)
+            }
+
+            HStack(spacing: 8) {
+                TextField("Name this shape", text: $shapeName)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                Button("Save to library") {
+                    saveToLibrary()
+                }
+                .buttonStyle(.bentoBordered)
+                .disabled(shapeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
 
             if let errorMessage {
                 Text(errorMessage)
@@ -190,7 +267,7 @@ struct FormationEditorView: View {
             label: position.abbreviation,
             position: position,
             x: 0.5,
-            y: 0.5
+            y: 0.45
         )
         slots.append(slot)
         selectedID = slot.id
@@ -210,6 +287,19 @@ struct FormationEditorView: View {
         slots = startingSlots
         selectedID = nil
         errorMessage = nil
+    }
+
+    /// Keeps the drawn dots for later without putting them in the XI.
+    private func saveToLibrary() {
+        let name = shapeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        do {
+            try store.saveFormationShape(name: name, slots: slots)
+            shapeName = ""
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func save() {
