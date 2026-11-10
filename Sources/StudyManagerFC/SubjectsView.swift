@@ -102,7 +102,7 @@ struct SubjectsView: View {
                     value: "\(overall.workCount)",
                     subtitle: "\(overall.pastPapers) papers · \(overall.homework) homework · \(overall.examQuestions) questions",
                     symbol: "doc.on.doc.fill",
-                    tint: .blue
+                    tint: .studyTeal
                 )
                 MetricTile(
                     title: "Tracked Topics",

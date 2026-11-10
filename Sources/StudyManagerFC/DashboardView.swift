@@ -1051,21 +1051,21 @@ private struct StudyStatsGrid: View {
                 value: "\(store.state.study.currentStreak) days",
                 subtitle: "Best: \(store.state.study.bestStreak) days",
                 symbol: "flame.fill",
-                tint: .orange
+                tint: .studyGold
             )
             MetricTile(
                 title: "Homework",
                 value: "\(store.state.study.homeworkCompleted)",
                 subtitle: "Assignments completed",
                 symbol: "book.closed.fill",
-                tint: .blue
+                tint: .studyTeal
             )
             MetricTile(
                 title: "Exam Practice",
                 value: "\(store.state.study.pastPapersCompleted)",
                 subtitle: "\(store.state.study.examQuestionsSolved) questions solved",
                 symbol: "doc.text.fill",
-                tint: .purple
+                tint: .studyViolet
             )
         }
     }

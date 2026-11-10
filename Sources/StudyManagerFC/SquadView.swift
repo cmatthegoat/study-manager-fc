@@ -88,9 +88,10 @@ struct SquadView: View {
     private var metricsRow: some View {
         HStack(spacing: 10) {
             squadMetric("Overall", "\(metrics.overall)", "Team rating", "chart.bar.fill", .studyGreen)
-            squadMetric("Attack", "\(metrics.attack)", "Attacking line", "bolt.fill", .orange)
-            squadMetric("Midfield", "\(metrics.midfield)", "Control", "arrow.triangle.branch", .blue)
-            squadMetric("Defence", "\(metrics.defence)", "Back line", "shield.fill", .purple)
+            // Metric tints come from the palette, so the row repaints with the club.
+            squadMetric("Attack", "\(metrics.attack)", "Attacking line", "bolt.fill", .studyGold)
+            squadMetric("Midfield", "\(metrics.midfield)", "Control", "arrow.triangle.branch", .studyTeal)
+            squadMetric("Defence", "\(metrics.defence)", "Back line", "shield.fill", .studyViolet)
             squadMetric("Squad Value", "\(metrics.totalValue.formatted())", "\(metrics.playerCount) players", "banknote", .studyGold)
         }
     }

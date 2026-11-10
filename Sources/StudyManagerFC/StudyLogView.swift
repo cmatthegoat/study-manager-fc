@@ -147,7 +147,7 @@ struct StudyLogView: View {
                 value: "+\(totals.xpEarned.formatted())",
                 subtitle: totals.averagePercentage.map { "\($0)% average marks" } ?? "No marks recorded",
                 symbol: "sparkles",
-                tint: .purple
+                tint: .studyViolet
             )
         }
     }
@@ -295,7 +295,7 @@ struct StudyLogView: View {
                 .frame(width: 54, alignment: .trailing)
             Text("+\(session.xpEarned) XP")
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color.purple)
+                .foregroundStyle(Color.studyViolet)
                 .frame(width: 66, alignment: .trailing)
             Text("+\(session.cashEarned)")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
