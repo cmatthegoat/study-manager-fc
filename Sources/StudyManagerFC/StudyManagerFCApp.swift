@@ -211,7 +211,7 @@ struct MainTabView: View {
     var body: some View {
         layoutBody
             .padding(12)
-            .background(AppBackground())
+            .background(AppBackground(paletteKey: store.paletteKey))
         .sheet(isPresented: $showingChangeTeam) {
             ChangeTeamSheet()
                 .environment(store)

@@ -9,7 +9,7 @@ struct ClubSelectionView: View {
 
     var body: some View {
         ZStack {
-            AppBackground()
+            AppBackground(paletteKey: store.paletteKey)
             ScrollView {
                 VStack(spacing: 20) {
                     hero
@@ -191,7 +191,7 @@ struct ChangeTeamSheet: View {
             footer
         }
         .frame(width: 900, height: 660)
-        .background(AppBackground())
+        .background(AppBackground(paletteKey: store.paletteKey))
         .alert("Could Not Change Team", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }

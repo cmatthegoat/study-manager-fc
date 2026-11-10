@@ -711,7 +711,7 @@ private struct TimerReviewSheet: View {
         }
         .padding(22)
         .frame(width: 520)
-        .background(AppBackground())
+        .background(AppBackground(paletteKey: store.paletteKey))
         .onAppear {
             marksObtained = store.timerMarksObtained.map(String.init) ?? ""
             marksTotal = store.timerMarksTotal.map(String.init) ?? ""

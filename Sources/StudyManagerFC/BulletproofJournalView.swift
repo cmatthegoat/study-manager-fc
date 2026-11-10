@@ -154,7 +154,7 @@ struct BulletproofJournalView: View {
             )
             .frame(width: 620)
             .padding(24)
-            .background(AppBackground())
+            .background(AppBackground(paletteKey: store.paletteKey))
             .preferredColorScheme(.dark)
         }
     }

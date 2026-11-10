@@ -418,6 +418,11 @@ extension View {
 /// The canvas: near-black with several heavily blurred light leaks in the bento accent
 /// palette, layered so the glow shows in the negative space between cards.
 struct AppBackground: View {
+    /// The palette identity this canvas was drawn for. A view with no stored properties is
+    /// indistinguishable from its previous self, so without a value that changes when the
+    /// theme does, SwiftUI never re-runs the body and the leaks keep their launch colours.
+    var paletteKey: String = ""
+
     /// Once a career exists the light leaks become the club's own colours, so the whole
     /// canvas reads as a red-and-blue mix for Barcelona or white-and-gold for Real Madrid.
     private var palette: [Color] {

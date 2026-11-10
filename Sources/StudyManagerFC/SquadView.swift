@@ -401,7 +401,7 @@ private struct PlayerPickerSheet: View {
             }
         }
         .frame(minWidth: 540, idealWidth: 580, minHeight: 560, idealHeight: 660)
-        .background(AppBackground())
+        .background(AppBackground(paletteKey: store.paletteKey))
     }
 
     private func sectionHeader(_ title: String, hint: String, tint: Color) -> some View {
@@ -656,7 +656,7 @@ private struct PlayerDetailSheet: View {
         }
         .padding(24)
         .frame(minWidth: 650, idealWidth: 700, minHeight: 520)
-        .background(AppBackground())
+        .background(AppBackground(paletteKey: store.paletteKey))
         .confirmationDialog("Release \(player.name)?", isPresented: $confirmRelease, titleVisibility: .visible) {
             Button("Release Player", role: .destructive) {
                 store.releasePlayer(playerID: player.id)

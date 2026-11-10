@@ -1150,6 +1150,7 @@ final class AppStore {
                   ThemePreset.allCases.count == 7,
                   ThemePreset.LayoutPreset.allCases.count == 3,
                   raiser.themePreset == .deep,
+                  raiser.paletteKey.contains(ThemePreset.deep.rawValue),
                   raiser.layoutPreset == .topBar,
                   storedTheme?.themePreset == ThemePreset.deep.rawValue,
                   storedTheme?.layoutPreset == ThemePreset.LayoutPreset.topBar.rawValue else {
@@ -2355,6 +2356,13 @@ final class AppStore {
         draft.lastPriceRisePercent = percent
         draft.lastPriceRiseAt = Date()
         commit(draft)
+    }
+
+    /// A value that changes whenever the palette does. `AppBackground` has no stored state
+    /// of its own, so SwiftUI treats it as unchanged between renders and keeps the colours
+    /// it was first drawn with; keying it on this is what makes the canvas repaint.
+    var paletteKey: String {
+        "\(state.themePreset)|\(state.paletteClubID ?? "club")|\(state.managedClubID ?? "none")"
     }
 
     /// The colour preset the career is running, defaulting to the club's plain colours.
