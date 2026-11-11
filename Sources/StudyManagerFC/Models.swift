@@ -901,6 +901,20 @@ enum StudySubject: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// The level this subject starts at before any topic says otherwise. Ext 2 is the
+    /// hardest thing on the timetable; Other is a neutral middle.
+    var baseDifficulty: Int {
+        switch self {
+        case .ext2Maths: 5
+        case .ext1Maths: 4
+        case .physics: 4
+        case .chemistry: 4
+        case .softwareEngineering: 3
+        case .englishAdvanced: 3
+        case .other: 3
+        }
+    }
+
     var cashMultiplier: Double {
         switch self {
         case .ext2Maths: 1.5
@@ -933,6 +947,9 @@ struct Subtopic: Identifiable, Codable, Hashable {
     var subject: StudySubject
     var name: String
     var createdAt: Date
+    /// How hard this topic is, 1...5, which fixes its minutes-per-mark pace. Nil falls back
+    /// to the subject's default level.
+    var difficulty: Int? = nil
 }
 
 struct StudySession: Identifiable, Codable, Hashable {
@@ -1093,6 +1110,12 @@ struct TodoItem: Identifiable, Codable, Hashable {
     var rewardAwarded: Bool = false
     /// 1 (most urgent) through 4, or nil when the task has no priority marker.
     var priority: Int? = nil
+    /// A time budget the task carries itself, in minutes. When this is set the planner uses
+    /// it as-is and never consults the difficulty table for this task.
+    var estimateMinutes: Int? = nil
+    /// How many questions or marks the task contains. Used to estimate its length from the
+    /// topic's pace, unless the task already carries an ETA.
+    var questionCount: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1105,6 +1128,8 @@ struct TodoItem: Identifiable, Codable, Hashable {
         case dueDate
         case rewardAwarded
         case priority
+        case estimateMinutes
+        case questionCount
     }
 }
 
@@ -1137,6 +1162,40 @@ extension TodoItem {
         rewardAwarded = try container.decodeIfPresent(Bool.self, forKey: .rewardAwarded) ?? false
         let savedPriority = try container.decodeIfPresent(Int.self, forKey: .priority)
         priority = savedPriority.flatMap { (1...4).contains($0) ? $0 : nil }
+        estimateMinutes = try container.decodeIfPresent(Int.self, forKey: .estimateMinutes)
+            .flatMap { $0 > 0 ? $0 : nil }
+        questionCount = try container.decodeIfPresent(Int.self, forKey: .questionCount)
+            .flatMap { $0 > 0 ? $0 : nil }
+    }
+}
+
+/// The one place the app decides how long a mark takes. The levels are fixed and never
+/// interpolated: a topic is always one of the five, so every estimate can be explained.
+enum DifficultyLevel {
+    /// Minutes one mark is expected to take at each level.
+    static func pace(for level: Int) -> Double {
+        switch min(max(level, 1), 5) {
+        case 1: 1.5
+        case 2: 2.0
+        case 3: 2.3
+        case 4: 2.8
+        default: 3.0
+        }
+    }
+
+    /// A rough length for a task that carries neither an ETA nor a question count.
+    static func defaultMinutes(_ level: Int) -> Int {
+        switch min(max(level, 1), 5) {
+        case 1: 20
+        case 2: 25
+        case 3: 30
+        case 4: 35
+        default: 40
+        }
+    }
+
+    static func paceText(_ level: Int) -> String {
+        pace(for: level).formatted(.number.precision(.fractionLength(1)))
     }
 }
 
@@ -1149,14 +1208,35 @@ struct TodoInput {
     var subject: StudySubject?
     var subtopicName: String?
     var priority: Int?
+    /// A time budget typed into the task (`45m`, `1h30`), in minutes.
+    var estimateMinutes: Int? = nil
+    /// A question count typed into the task (`12q`), used when no ETA is given.
+    var questionCount: Int? = nil
 
     private static let topicSeparators: Set<Character> = ["-", "–", "—", "|"]
 
     static func parse(_ raw: String, subtopics: [Subtopic] = []) -> TodoInput {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return TodoInput(title: "", subject: nil, subtopicName: nil, priority: nil) }
+        let workload = extractingWorkload(from: raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        let text = workload.text
+        guard !text.isEmpty else {
+            return TodoInput(
+                title: "",
+                subject: nil,
+                subtopicName: nil,
+                priority: nil,
+                estimateMinutes: workload.minutes,
+                questionCount: workload.questions
+            )
+        }
 
-        var input = TodoInput(title: text, subject: nil, subtopicName: nil, priority: detectPriority(in: text))
+        var input = TodoInput(
+            title: text,
+            subject: nil,
+            subtopicName: nil,
+            priority: detectPriority(in: text),
+            estimateMinutes: workload.minutes,
+            questionCount: workload.questions
+        )
         guard let hash = text.firstIndex(of: "#") else { return input }
         let afterHash = text.index(after: hash)
         guard let match = StudySubject.tagMatch(in: text[afterHash...]) else { return input }
@@ -1217,6 +1297,59 @@ struct TodoInput {
             return (name, remainder.isEmpty ? name : remainder)
         }
         return (text, text)
+    }
+
+    /// Reads a time budget or a question count out of the typed task and removes it from the
+    /// words, the way `p1` is read. `12q` means twelve questions; `45m`, `1h30` or `1.5h`
+    /// mean that many minutes. Either one overrides the difficulty table for that task.
+    private static func extractingWorkload(from raw: String) -> (text: String, minutes: Int?, questions: Int?) {
+        var working = raw
+        var minutes: Int?
+        var questions: Int?
+
+        if let regex = try? NSRegularExpression(pattern: "(?i)(?<![a-z0-9])~?(\\d{1,2})\\s?h(?:rs?|ours?)?(?:\\s?(\\d{1,2})(?:\\s?m(?:in(?:s|utes?)?)?)?)?(?![a-z0-9])"),
+           let match = regex.firstMatch(in: working, range: NSRange(working.startIndex..., in: working)),
+           let hoursRange = Range(match.range(at: 1), in: working),
+           let hours = Int(working[hoursRange]) {
+            var total = hours * 60
+            if match.range(at: 2).location != NSNotFound,
+               let extraRange = Range(match.range(at: 2), in: working),
+               let extra = Int(working[extraRange]) {
+                total += extra
+            }
+            minutes = min(max(total, 5), 600)
+            if let whole = Range(match.range, in: working) {
+                working.removeSubrange(whole)
+            }
+        }
+
+        if minutes == nil,
+           let regex = try? NSRegularExpression(pattern: "(?i)(?<![a-z0-9])~?(\\d{1,3})\\s?(?:m|min|mins|minute|minutes)(?![a-z0-9])"),
+           let match = regex.firstMatch(in: working, range: NSRange(working.startIndex..., in: working)),
+           let valueRange = Range(match.range(at: 1), in: working),
+           let value = Int(working[valueRange]) {
+            minutes = min(max(value, 5), 600)
+            if let whole = Range(match.range, in: working) {
+                working.removeSubrange(whole)
+            }
+        }
+
+        if let regex = try? NSRegularExpression(pattern: "(?i)(?<![a-z0-9])~?(\\d{1,3})\\s?(?:q|qs|ques|question|questions)(?![a-z0-9])"),
+           let match = regex.firstMatch(in: working, range: NSRange(working.startIndex..., in: working)),
+           let valueRange = Range(match.range(at: 1), in: working),
+           let value = Int(working[valueRange]) {
+            questions = min(max(value, 1), 500)
+            if let whole = Range(match.range, in: working) {
+                working.removeSubrange(whole)
+            }
+        }
+
+        return (
+            working.split(whereSeparator: { $0 == " " }).joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            minutes,
+            questions
+        )
     }
 
     private static func strippingPriorityMarkers(from text: String) -> String {

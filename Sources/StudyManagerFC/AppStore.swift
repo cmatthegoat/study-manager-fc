@@ -532,6 +532,94 @@ final class AppStore {
                 exit(1)
             }
 
+            // Difficulty paces are exact, and an ETA on a task overrides the table entirely.
+            guard DifficultyLevel.pace(for: 1) == 1.5,
+                  DifficultyLevel.pace(for: 2) == 2.0,
+                  DifficultyLevel.pace(for: 3) == 2.3,
+                  DifficultyLevel.pace(for: 4) == 2.8,
+                  DifficultyLevel.pace(for: 5) == 3.0 else {
+                print("SELF TEST FAIL: the minutes-per-mark table is not the agreed one")
+                exit(1)
+            }
+
+            let hardTopic = Subtopic(id: UUID(), subject: .ext2Maths, name: "Complex Numbers", createdAt: Date(), difficulty: 5)
+            let hardTask = TodoItem(
+                id: UUID(), title: "Ten questions", subject: .ext2Maths,
+                subtopicID: hardTopic.id, subtopicName: hardTopic.name,
+                isCompleted: false, createdAt: Date(), dueDate: nil,
+                questionCount: 10
+            )
+            let paced = SessionPlanner.estimate(for: hardTask, subtopics: [hardTopic], sessions: [])
+            guard paced.minutes == 30, paced.source == .questions, paced.level == 5 else {
+                print("SELF TEST FAIL: ten questions at L5 did not price at 30 minutes")
+                exit(1)
+            }
+
+            var overrideTask = hardTask
+            overrideTask.estimateMinutes = 18
+            let overridden = SessionPlanner.estimate(for: overrideTask, subtopics: [hardTopic], sessions: [])
+            guard overridden.minutes == 18, overridden.source == .given else {
+                print("SELF TEST FAIL: an ETA on the task did not override the level estimate")
+                exit(1)
+            }
+
+            // An ETA and a question count typed into the task line are read and removed.
+            let inlineWorkload = TodoInput.parse("p1 #Ext 2 Maths 12q 45m: finish set", subtopics: [])
+            guard inlineWorkload.questionCount == 12,
+                  inlineWorkload.estimateMinutes == 45,
+                  !inlineWorkload.title.contains("12q"),
+                  !inlineWorkload.title.contains("45m") else {
+                print("SELF TEST FAIL: an inline ETA or question count was not read")
+                exit(1)
+            }
+
+            // Planning: deadlines outrank everything, the budget is never exceeded, and a task
+            // longer than the time left is sliced rather than dropped.
+            var sessionPlanState = GameState.fresh()
+            sessionPlanState.subtopics = [hardTopic]
+            let sessionOverdue = TodoItem(
+                id: UUID(), title: "Overdue", subject: .ext2Maths,
+                subtopicID: hardTopic.id, subtopicName: hardTopic.name,
+                isCompleted: false, createdAt: Date(),
+                dueDate: Calendar.current.date(byAdding: .day, value: -1, to: Date()),
+                priority: 1, estimateMinutes: 40
+            )
+            let sessionSomeday = TodoItem(
+                id: UUID(), title: "Someday", subject: .physics,
+                isCompleted: false, createdAt: Date(), dueDate: nil,
+                priority: 4, estimateMinutes: 40
+            )
+            sessionPlanState.todos = [sessionSomeday, sessionOverdue]
+            let sessionFilled = SessionPlanner.plan(budget: 90, state: sessionPlanState, sessions: [])
+            guard sessionFilled.steps.first?.todo.id == sessionOverdue.id,
+                  sessionFilled.plannedMinutes <= 90,
+                  sessionFilled.steps.reduce(0, { $0 + $1.minutes }) <= 90 else {
+                print("SELF TEST FAIL: the planner did not rank the overdue task first or overran its budget")
+                exit(1)
+            }
+
+            var sessionSliceState = GameState.fresh()
+            sessionSliceState.todos = [
+                TodoItem(id: UUID(), title: "Long", subject: .physics, isCompleted: false, createdAt: Date(), dueDate: nil, estimateMinutes: 60)
+            ]
+            let sessionSlice = SessionPlanner.plan(budget: 40, state: sessionSliceState, sessions: [])
+            guard sessionSlice.steps.count == 1,
+                  sessionSlice.steps[0].minutes == 40,
+                  sessionSlice.steps[0].isPartial,
+                  sessionSlice.leftOverMinutes == 0 else {
+                print("SELF TEST FAIL: a task longer than the budget was not sliced")
+                exit(1)
+            }
+
+            // A todo saved before estimates existed still decodes, with the new fields empty.
+            let oldTodoJSON = "{\"id\":\"\(UUID().uuidString)\",\"title\":\"Old task\",\"isCompleted\":false,\"createdAt\":0}"
+            guard let oldTodo = try? JSONDecoder().decode(TodoItem.self, from: Data(oldTodoJSON.utf8)),
+                  oldTodo.estimateMinutes == nil,
+                  oldTodo.questionCount == nil else {
+                print("SELF TEST FAIL: a todo without estimates did not decode")
+                exit(1)
+            }
+
             app.deleteStudySession(session.id)
             AppStore.flushPendingSaves()
             guard let reloaded = try store.load(),
@@ -1238,7 +1326,7 @@ final class AppStore {
                 exit(1)
             }
 
-            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, seven club-relative styles plus every team's own palette, three layouts, hand-drawn formations, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review")
+            print("SELF TEST OK: todo round-trip, \(expectedReward) cash reward then cleared off the board (no double-pay, old ticked tasks purged on load), p1–p4 priority + #subject - topic parsing and sorting, created topics persist, study-log deletion persists, schema 6 adopts database potentials, transfer offers list/negotiate/sell, formation switching + migration + in-XI swaps, subject/topic mark averages, per-subject colours, injury report + recovery, a bid just under the asking price never draws a lower counter, 95,000 academy upgrades, manual price rises that stack, persist and refuse a negative, income scaled to the raised prices, seven club-relative styles plus every team's own palette, three layouts, hand-drawn formations, XI-based club ratings, change team keeping the career, injuries cleared at a new season, equal development to full potential, performance bonuses by position, potential-based valuations, academy intakes sized and banded by level, decayed a level each season, pot-based world intakes, batches reaching the squad, timer sessions filed only after review, difficulty paces + session planning (a task ETA overrides the level, budget never overrun)")
             try? fm.removeItem(at: tempDir)
             exit(0)
         } catch {
@@ -1971,6 +2059,17 @@ final class AppStore {
         commit(draft)
     }
 
+    /// Sets how hard a topic is (1...5), which fixes its minutes-per-mark pace. Nil hands the
+    /// topic back to its subject's default level.
+    func setSubtopicDifficulty(_ id: UUID, level: Int?) {
+        guard let index = state.subtopics.firstIndex(where: { $0.id == id }) else { return }
+        let clamped = level.map(SessionPlanner.clampLevel)
+        guard state.subtopics[index].difficulty != clamped else { return }
+        var draft = state
+        draft.subtopics[index].difficulty = clamped
+        commit(draft)
+    }
+
     /// Removes a study session from recent sessions. The session data is preserved
     /// in history but removed from the recent sessions list.
     func deleteStudySession(_ id: UUID) {
@@ -2028,7 +2127,14 @@ final class AppStore {
     /// Adds a task, honouring inline directives: `p2 #Ext 2 Maths - Complex Numbers: finish 4.2`
     /// files the task under Ext 2 Maths and its Complex Numbers topic at priority 2. A due
     /// date is stored as its calendar day, so the task groups with everything else due then.
-    func addTodo(_ rawTitle: String, subject defaultSubject: StudySubject = .other, subtopicID defaultSubtopicID: UUID? = nil, dueDate: Date? = nil) -> TodoItem? {
+    func addTodo(
+        _ rawTitle: String,
+        subject defaultSubject: StudySubject = .other,
+        subtopicID defaultSubtopicID: UUID? = nil,
+        dueDate: Date? = nil,
+        estimateMinutes: Int? = nil,
+        questionCount: Int? = nil
+    ) -> TodoItem? {
         guard hasCareer else { return nil }
         let input = TodoInput.parse(rawTitle, subtopics: state.subtopics)
         let trimmed = input.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2063,7 +2169,9 @@ final class AppStore {
             isCompleted: false,
             createdAt: Date(),
             dueDate: dueDate.map { Calendar.current.startOfDay(for: $0) },
-            priority: input.priority
+            priority: input.priority,
+            estimateMinutes: input.estimateMinutes ?? estimateMinutes,
+            questionCount: input.questionCount ?? questionCount
         )
         draft.todos.append(todo)
         commit(draft)

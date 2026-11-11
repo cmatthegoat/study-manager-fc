@@ -104,6 +104,7 @@ enum StudyPlan {
 /// planning and the timer are no longer two separate habits.
 struct StudyPlanCard: View {
     @Environment(AppStore.self) private var store
+    @State private var showingBuilder = false
 
     private var items: [PlanItem] {
         StudyPlan.week(for: state, sessions: store.state.recentSessions)
@@ -123,13 +124,25 @@ struct StudyPlanCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(
-                title: "This week's plan",
-                subtitle: items.isEmpty
-                    ? "Add an assessment, a mistake or some marked work and the plan builds itself"
-                    : "Built from your deadlines, your retests and your weakest topics",
-                symbol: "calendar.day.timeline.left"
-            )
+            HStack(alignment: .top, spacing: 8) {
+                SectionHeader(
+                    title: "This week's plan",
+                    subtitle: items.isEmpty
+                        ? "Add an assessment, a mistake or some marked work and the plan builds itself"
+                        : "Built from your deadlines, your retests and your weakest topics",
+                    symbol: "calendar.day.timeline.left"
+                )
+                Spacer(minLength: 4)
+                Button {
+                    showingBuilder = true
+                } label: {
+                    Label("Plan by time", systemImage: "clock.badge.checkmark")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                }
+                .buttonStyle(.bentoBordered)
+                .bentoTint(.primary)
+                .help("Pick how long you have and get a list of tasks that fit")
+            }
 
             ForEach(Array(today.prefix(3))) { item in
                 row(item, isToday: true)
@@ -151,6 +164,10 @@ struct StudyPlanCard: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Neon.border, lineWidth: 1)
         )
+        .sheet(isPresented: $showingBuilder) {
+            SessionBuilderView()
+                .environment(store)
+        }
     }
 
     private func row(_ item: PlanItem, isToday: Bool) -> some View {

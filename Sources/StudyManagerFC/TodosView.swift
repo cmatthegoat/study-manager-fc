@@ -7,6 +7,8 @@ struct TodosView: View {
     @State private var selectedSubject: StudySubject = .other
     @State private var selectedSubtopicID: UUID?
     @State private var draftDueDate: Date?
+    @State private var draftEstimate = ""
+    @State private var draftQuestions = ""
 
     @State private var editingTodoID: UUID?
     @State private var editingTitle = ""
@@ -144,6 +146,19 @@ struct TodosView: View {
                 .disabled(draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             DueDateField(dueDate: $draftDueDate)
+            HStack(spacing: 10) {
+                TextField("ETA (min)", text: $draftEstimate)
+                    .bentoField()
+                    .frame(width: 86)
+                TextField("Questions", text: $draftQuestions)
+                    .bentoField()
+                    .frame(width: 86)
+                Text("An ETA overrides the difficulty estimate; questions are priced at the topic's pace")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
             HStack(spacing: 6) {
                 Pill(
                     text: "+\(store.todoReward(for: effectiveSubject)) cash when completed (×\(multiplierText(effectiveSubject.cashMultiplier)))",
@@ -158,6 +173,12 @@ struct TodosView: View {
                 }
                 if let priority = preview.priority {
                     PriorityBadge(priority: priority)
+                }
+                if let estimate = preview.estimateMinutes {
+                    Pill(text: "\(estimate) min", color: .studyTeal, icon: "timer")
+                }
+                if let questions = preview.questionCount {
+                    Pill(text: "\(questions) Q", color: .studyTeal, icon: "list.number")
                 }
             }
         }
@@ -200,10 +221,14 @@ struct TodosView: View {
             draftTitle,
             subject: selectedSubject,
             subtopicID: selectedSubtopicID,
-            dueDate: draftDueDate
+            dueDate: draftDueDate,
+            estimateMinutes: Int(draftEstimate),
+            questionCount: Int(draftQuestions)
         ) != nil else { return }
         draftTitle = ""
         draftDueDate = nil
+        draftEstimate = ""
+        draftQuestions = ""
     }
 
     private func startEdit(_ todo: TodoItem) {

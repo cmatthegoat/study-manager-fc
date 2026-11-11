@@ -479,7 +479,7 @@ struct TodoItemRow: View {
                     .foregroundStyle(todo.isCompleted ? Color.secondary : Color.primary)
                     .lineLimit(2)
             }
-            if todo.subtopicName != nil || todo.dueDate != nil {
+            if todo.subtopicName != nil || todo.dueDate != nil || !todo.isCompleted {
                 HStack(spacing: 6) {
                     if let subtopic = todo.subtopicName {
                         Text(subtopic)
@@ -491,6 +491,16 @@ struct TodoItemRow: View {
                     }
                     if todo.dueDate != nil {
                         TodoDueBadge(todo: todo)
+                    }
+                    if !todo.isCompleted {
+                        Text(SessionPlanner.chipText(
+                            for: todo,
+                            subtopics: store.subtopics,
+                            sessions: store.state.recentSessions
+                        ))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
                     }
                 }
             }
@@ -525,6 +535,8 @@ struct TodoDetailSheet: View {
     @State private var subtopicID: UUID?
     @State private var priority: Int? = nil
     @State private var dueDate: Date?
+    @State private var estimate = ""
+    @State private var questions = ""
 
     private var subjectTopics: [Subtopic] {
         store.subtopics(for: subject)
@@ -565,6 +577,16 @@ struct TodoDetailSheet: View {
                     )
                 }
                 DueDateField(dueDate: $dueDate)
+                LabeledContent("ETA") {
+                    TextField("Minutes", text: $estimate)
+                        .bentoField()
+                        .frame(width: 90)
+                }
+                LabeledContent("Questions") {
+                    TextField("Count", text: $questions)
+                        .bentoField()
+                        .frame(width: 90)
+                }
             }
             HStack {
                 Spacer()
@@ -592,6 +614,8 @@ struct TodoDetailSheet: View {
         subtopicID = todo.subtopicID
         priority = todo.priority
         dueDate = todo.dueDate
+        estimate = todo.estimateMinutes.map(String.init) ?? ""
+        questions = todo.questionCount.map(String.init) ?? ""
     }
 
     private func save() {
@@ -606,11 +630,14 @@ struct TodoDetailSheet: View {
         draft.todos[index].subtopicName = topic?.name
         draft.todos[index].priority = priority
         draft.todos[index].dueDate = dueDate.map { Calendar.current.startOfDay(for: $0) }
+        draft.todos[index].estimateMinutes = Int(estimate).flatMap { $0 > 0 ? $0 : nil }
+        draft.todos[index].questionCount = Int(questions).flatMap { $0 > 0 ? $0 : nil }
         store.commit(draft)
     }
 }
 
 struct SubtopicRow: View {
+    @Environment(AppStore.self) private var store
     let subtopic: Subtopic
     let aggregate: StudyAggregate
     let onDelete: () -> Void
@@ -648,6 +675,17 @@ struct SubtopicRow: View {
                 }
                 ReadinessBar(progress: aggregate.averageRatio ?? 0, tint: tint, height: 4)
             }
+            BentoMenu(
+                selection: Binding(
+                    get: { subtopic.difficulty },
+                    set: { store.setSubtopicDifficulty(subtopic.id, level: $0) }
+                ),
+                options: [BentoOption("Auto · L\(subtopic.subject.baseDifficulty)", value: Int?.none)]
+                    + (1...5).map { level in
+                        BentoOption("L\(level) · \(DifficultyLevel.paceText(level)) min/mark", value: Optional(level))
+                    },
+                width: 118
+            )
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .font(.system(size: 10, weight: .semibold))

@@ -225,3 +225,53 @@ Large and generated paths are ignored by `.gitignore`: `.build/`, `dist/`,
 ## License
 
 Add a license before publishing — none is included yet.
+
+## Time estimates and session planning
+
+Every open task can carry a time budget in minutes, a question count, or both. The
+dashboard's **Plan by time** sheet turns "I have 90 minutes" into an ordered list of tasks
+that fit, ranked by deadline, priority and difficulty.
+
+### Minutes per mark
+
+A topic's difficulty is one of five levels. The level sets how long a mark is expected to
+take, and the table is fixed — the app never interpolates between rows, so every estimate
+can be explained.
+
+| Level | Minutes per mark |
+|-------|------------------|
+| 1 | 1.5 |
+| 2 | 2.0 |
+| 3 | 2.3 |
+| 4 | 2.8 |
+| 5 | 3.0 |
+
+A question counts as one mark: ten questions on a level-5 topic are 30 minutes. Set a
+topic's level from its row in Subjects (1–5, or Auto to follow the subject). Subjects
+default to Ext 2 Maths 5, Ext 1 Maths 4, Physics 4, Chemistry 4, Software Engineering 3,
+English Advanced 3, Other 3. Marked history can move a topic one level either way — under
+50% raises it, 85% or better lowers it — but never further.
+
+### Overriding the table
+
+An ETA on the task always wins. When a task has one, the difficulty table is not consulted
+at all — the app takes the number you gave it, whether or not a question count is present.
+Type it inline when adding a task:
+
+- `45m`, `1h30` or `1.5h` sets the ETA
+- `12q` or `12 questions` sets the count
+- `p1 #Ext 2 Maths - Complex Numbers: finish 4.2 12q 45m` files it, and the ETA wins
+
+The same two fields live in the task's edit sheet. With no ETA and no count, the planner
+falls back to a level default (20/25/30/35/40 minutes for levels 1–5) and marks it rough.
+
+### How a session is filled
+
+1. Overdue tasks first, then due today, then by how soon they fall due.
+2. Priority breaks ties (P1 worth most), and harder work is weighted up because that is
+   where marks are lost.
+3. Same-subject work is kept together, with a four-minute penalty for switching subject.
+4. A task longer than the time left becomes a slice ("25 of 60 min") rather than being
+   dropped; filling stops once fewer than 15 minutes remain.
+
+Each row starts the focus timer on exactly that task, so the plan and the clock agree.
